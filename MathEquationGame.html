@@ -25,6 +25,23 @@
   }
   canvas { display: block; cursor: crosshair; background: transparent; }
 
+  /* ★ 鼠标坐标提示（无背景，只显示文字） */
+  #coordTip {
+    position: fixed;
+    color: #111;
+    font-size: 12px;
+    font-family: "SF Mono", Consolas, "Courier New", monospace;
+    pointer-events: none;
+    z-index: 30;
+    display: none;
+    white-space: nowrap;
+    transform: translate(-50%, calc(-100% - 12px));
+    letter-spacing: 0.02em;
+    text-shadow:
+      0 0 3px #fff, 0 0 3px #fff,
+      0 0 3px #fff, 0 0 3px #fff;
+  }
+
   #uiLayer { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
   #uiLayer > * { pointer-events: auto; }
 
@@ -151,6 +168,8 @@
 <div id="stage">
   <div id="canvasWrap"><canvas id="canvas"></canvas></div>
 </div>
+
+<div id="coordTip"></div>
 
 <div id="uiLayer">
   <div id="topLeft">
@@ -283,6 +302,7 @@
   const toastEl = document.getElementById('toast');
   const settingsPanel = document.getElementById('settingsPanel');
   const historyPanel = document.getElementById('historyPanel');
+  const coordTip = document.getElementById('coordTip');
 
   let W = 0, H = 0, cx = 0, cy = 0, scale = 44;
   let dpr = window.devicePixelRatio || 1;
@@ -291,6 +311,13 @@
   function parseKey(k) { const a = k.split(','); return [Number(a[0]), Number(a[1])]; }
   function inRange(i, j) { return i >= -state.R && i < state.R && j >= -state.R && j < state.R; }
   function snap(v) { return Math.round(v * dpr) / dpr; }
+
+  // 坐标格式化：精度 0.1，消除 "-0.0"
+  function fmt1(v) {
+    let s = v.toFixed(1);
+    if (s === '-0.0') s = '0.0';
+    return s;
+  }
 
   function computeLayout() {
     W = window.innerWidth;
@@ -607,6 +634,16 @@
       ctx.moveTo(ax, 0); ctx.lineTo(ax, H);
       ctx.moveTo(0, ay); ctx.lineTo(W, ay);
       ctx.stroke();
+
+      // ★ 在边界外坐标轴末端显示 x / y
+      ctx.fillStyle = C.axisColor;
+      ctx.font = 'italic 18px "Times New Roman", Cambria, Georgia, serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      // x 轴：R 边界右侧，略微上偏，避免水平轴穿过字母
+      ctx.fillText('x', cx + state.R * scale + 16, cy - 9);
+      // y 轴：R 边界上方，略微右偏，避免垂直轴穿过字母
+      ctx.fillText('y', cx + 9, cy - state.R * scale - 16);
     }
 
     if (C.showTick) {
@@ -873,11 +910,6 @@
      1. 先扫四条边界（高精度）—— 识别边/角上的交点
      2. 若边界无任何交点 → 立即返回（格子未与曲线接触）
      3. 若有边界交点但无内部交点 → 进行内部双向扫描
-        —— 关键：内部扫描可以发现"曲线从角点/窄带进入格子内部"的情况
-        —— 例如 y=-100x(x-8) 在 (0,0) 格子：
-           角 (0,0) 与顶边 (0.00125, 1) 有交点，
-           但曲线从 (0,0) 到顶边穿过格子内部狭长一段，
-           内部扫描线 y=0.5 会在 x≈0.000625 处找到内部根。
      4. 每条扫描线上的根都用 50 次二分法精确定位，亚像素精度
   ================================================================= */
   function analyzeCell(i, j, F) {
@@ -922,9 +954,6 @@
       return (a + b) / 2;
     }
 
-    // 沿一条扫描线扫描并检测符号变化；找到 interior 时立即返回 true
-    // fixedIsY=true : 固定 y=fixed，沿 x 从 start 扫到 end
-    // fixedIsY=false: 固定 x=fixed，沿 y 从 start 扫到 end
     function scanLine(fixedIsY, fixed, start, end, segs) {
       const g = fixedIsY ? (t) => F(t, fixed) : (t) => F(fixed, t);
       let prevT = start;
@@ -959,16 +988,13 @@
     }
 
     // ===== Phase 2：内部双向扫描 =====
-    // 关键：捕获"曲线经过角/边进入内部"的情况（例如陡峭抛物线在 (0,0) 格内的窄带穿越）
     const NI = 24;
-    // 水平扫描线（固定 y，沿 x 扫）
     for (let k = 1; k < NI; k++) {
       const wy = y0 + (y1 - y0) * k / NI;
       if (scanLine(true, wy, x0, x1, NI)) {
         return { interior: true, edge: true, corner: true };
       }
     }
-    // 垂直扫描线（固定 x，沿 y 扫）
     for (let k = 1; k < NI; k++) {
       const wx = x0 + (x1 - x0) * k / NI;
       if (scanLine(false, wx, y0, y1, NI)) {
@@ -1067,11 +1093,17 @@
     state.cells.set(cellKey(i, j), color);
     state.pending = null;
     state.phase = 'solve';
+
+    // 确认放置后，清除上一轮方程文本与曲线
+    eqInput.value = '';
+    clearCurve();
+
     updateUI();
     draw();
   }
 
   function cancelPlacement() {
+    // 取消放置：保留上一轮方程文本与曲线
     state.pending = null;
     updateUI();
     draw();
@@ -1099,10 +1131,10 @@
     });
 
     if (result === 'pass') {
-      showToast('通过！进入下一轮');
+      showToast('通过！请放置下一格');
       state.phase = 'place';
       state.round++;
-      eqInput.value = '';
+      // 保留方程文本与曲线，等下一个放置确认后再清除
       updateUI();
       draw();
     } else {
@@ -1125,7 +1157,7 @@
     });
     state.phase = 'place';
     state.round++;
-    eqInput.value = '';
+    // 判负后保留方程文本与曲线，等下一个放置确认后再清除
     showToast('已判负，进入下一轮');
     updateUI();
     draw();
@@ -1186,7 +1218,6 @@
       const txt = eq.result === 'pass' ? '通过'
                 : eq.result === 'fail' ? '未通过' : '判负';
 
-      // 使用 MathLive 静态渲染组件 <math-span>（推荐）
       const eqSpan = document.createElement('span');
       eqSpan.className = 'eqText';
       if (hasMathSpan) {
@@ -1330,6 +1361,26 @@
   function bindEvents() {
     canvas.addEventListener('contextmenu', e => e.preventDefault());
 
+    // ★ 鼠标坐标提示：显示在鼠标位置上方，精度 0.1
+    canvas.addEventListener('mousemove', e => {
+      const rect = canvas.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const wx = (sx - cx) / scale;
+      const wy = (cy - sy) / scale;
+      if (wx >= -state.R && wx <= state.R && wy >= -state.R && wy <= state.R) {
+        coordTip.style.display = 'block';
+        coordTip.style.left = e.clientX + 'px';
+        coordTip.style.top = e.clientY + 'px';
+        coordTip.textContent = `(${fmt1(wx)}, ${fmt1(wy)})`;
+      } else {
+        coordTip.style.display = 'none';
+      }
+    });
+    canvas.addEventListener('mouseleave', () => {
+      coordTip.style.display = 'none';
+    });
+
     canvas.addEventListener('mousedown', e => {
       e.preventDefault();
       if (state.phase !== 'place') { showToast('当前不是放置阶段'); return; }
@@ -1342,10 +1393,6 @@
       const key = cellKey(i, j);
       if (state.cells.has(key)) return;
       const color = e.button === 2 ? 'red' : 'blue';
-
-      if (state.curveSegments) {
-        clearCurve();
-      }
 
       if (!check3x3(i, j)) {
         failPlacement('违反 3×3 规则（任意 3×3 区域最多 3 个格子）');
