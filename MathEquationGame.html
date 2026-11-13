@@ -1,0 +1,1487 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title></title>
+<script defer src="https://cdn.jsdelivr.net/npm/mathlive"></script>
+<script src="https://cdn.jsdelivr.net/npm/marchingsquares@1.3.3/dist/marchingsquares.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #fff; user-select: none;
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #111;
+  }
+  #bgLayer { position: fixed; inset: 0; z-index: 0; background: #ffffff; }
+  #canvasWrap { position: fixed; inset: 0; z-index: 1; }
+  #canvasWrap.shake { animation: shake 0.4s; }
+  @keyframes shake {
+    0%,100% { transform: translateX(0); }
+    20% { transform: translateX(-7px); }
+    40% { transform: translateX(7px); }
+    60% { transform: translateX(-5px); }
+    80% { transform: translateX(5px); }
+  }
+  canvas { display: block; cursor: crosshair; background: transparent; }
+
+  #uiLayer { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+  #uiLayer > * { pointer-events: auto; }
+
+  #topLeft { position: fixed; top: 16px; left: 16px; display: flex; gap: 8px; }
+  .iconBtn {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+    padding: 6px 12px; font-size: 13px; color: #374151; cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .iconBtn:hover { background: #f9fafb; border-color: #d1d5db; }
+  .iconBtn:disabled { opacity: 0.4; cursor: default; }
+
+  #turnLabel {
+    position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+    font-size: 13px; color: #6b7280;
+    background: #fff; padding: 5px 14px; border-radius: 14px;
+    border: 1px solid #f3f4f6; white-space: nowrap;
+  }
+
+  #bottomBar {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 10px; align-items: center;
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 14px;
+    padding: 10px 16px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06); max-width: 94vw;
+  }
+  math-field {
+    width: 400px; min-height: 44px; border: 1px solid #e5e7eb;
+    border-radius: 10px; padding: 8px 14px; font-size: 18px;
+    --hue: 220; outline: none;
+    transition: border-color 0.15s;
+    user-select: text; -webkit-user-select: text; cursor: text;
+  }
+  math-field:focus-within { border-color: #6366f1; }
+  math-field[disabled] { background: #f9fafb; opacity: 0.5; cursor: default; }
+
+  #confirmBar {
+    position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%);
+    display: none; gap: 8px; align-items: center;
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+    padding: 8px 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+  }
+  #confirmBar.show { display: flex; }
+
+  .panel {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 18px;
+    padding: 22px; z-index: 100; display: none;
+    box-shadow: 0 12px 48px rgba(0,0,0,0.16);
+    width: 360px; max-height: 86vh; overflow-y: auto;
+  }
+  .panel.show { display: block; }
+  .panel h3 { font-size: 14px; font-weight: 600; margin-bottom: 18px; color: #111; }
+  .panel .section { margin-top: 18px; padding-top: 18px; border-top: 1px solid #f3f4f6; }
+  .panel .section h4 {
+    font-size: 11px; font-weight: 600; color: #9ca3af;
+    margin-bottom: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .field {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 11px; gap: 12px; font-size: 13px; color: #374151;
+  }
+  .field span { flex: 1; }
+  .field input[type="number"] {
+    width: 76px; border: 1px solid #e5e7eb; border-radius: 6px;
+    padding: 4px 8px; font-size: 13px; outline: none;
+  }
+  .field input[type="range"] { width: 110px; accent-color: #6366f1; }
+  .field input[type="color"] {
+    width: 42px; height: 28px; border: 1px solid #e5e7eb;
+    border-radius: 6px; padding: 0; cursor: pointer; background: #fff;
+  }
+  .field input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: #6366f1; }
+  .panel .close {
+    margin-top: 20px; width: 100%; padding: 10px;
+    background: #111; color: #fff; border: none; border-radius: 10px;
+    font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  .panel .close:hover { background: #374151; }
+
+  .filterBar { display: flex; gap: 6px; margin-bottom: 14px; }
+  .filterBtn {
+    flex: 1; padding: 7px; border: 1px solid #e5e7eb; border-radius: 7px;
+    background: #fff; font-size: 12px; cursor: pointer; color: #6b7280;
+    transition: all 0.15s;
+  }
+  .filterBtn.active { background: #111; color: #fff; border-color: #111; }
+
+  #historyList { max-height: 440px; overflow-y: auto; }
+  .histItem {
+    padding: 10px 12px; border-radius: 9px; font-size: 13px;
+    cursor: pointer; margin-bottom: 4px;
+    display: flex; justify-content: space-between; gap: 12px; align-items: baseline;
+  }
+  .histItem:hover { background: #f9fafb; }
+  .histItem .eqText { word-break: break-all; font-size: 15px; }
+  .histItem math-span { font-size: 15px; }
+  .histItem .meta { color: #9ca3af; font-size: 11px; flex-shrink: 0; white-space: nowrap; }
+  .res-pass { color: #10b981; }
+  .res-fail { color: #ef4444; }
+  .res-unknown { color: #6b7280; }
+  .empty { color: #9ca3af; font-size: 13px; padding: 12px 0; text-align: center; }
+
+  #flash {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.18);
+    pointer-events: none; opacity: 0; transition: opacity 0.25s; z-index: 50;
+  }
+  #flash.show { opacity: 1; }
+
+  #toast {
+    position: fixed; bottom: 146px; left: 50%; transform: translateX(-50%);
+    background: #111; color: #fff; padding: 8px 18px; border-radius: 9px;
+    font-size: 13px; opacity: 0; transition: opacity 0.2s;
+    pointer-events: none; z-index: 200; white-space: nowrap;
+    max-width: 80vw; overflow: hidden; text-overflow: ellipsis;
+  }
+  #toast.show { opacity: 0.92; }
+</style>
+</head>
+<body>
+
+<div id="bgLayer"></div>
+<div id="stage">
+  <div id="canvasWrap"><canvas id="canvas"></canvas></div>
+</div>
+
+<div id="uiLayer">
+  <div id="topLeft">
+    <button class="iconBtn" id="settingsBtn">设置</button>
+    <button class="iconBtn" id="historyBtn">历史</button>
+  </div>
+
+  <div id="turnLabel"></div>
+
+  <div id="bottomBar">
+    <math-field id="eqInput" placeholder="输入方程，如 x^2+y^2=1"></math-field>
+    <button class="iconBtn" id="judgeBtn">判定</button>
+    <button class="iconBtn" id="loseBtn" title="判当前解题方失败">判负</button>
+  </div>
+
+  <div id="confirmBar">
+    <span id="confirmText" style="font-size:13px;color:#374151;"></span>
+    <button class="iconBtn" id="confirmBtn">确认</button>
+    <button class="iconBtn" id="cancelBtn">取消</button>
+  </div>
+</div>
+
+<div id="settingsPanel" class="panel">
+  <h3>设置</h3>
+  <div class="field">
+    <span>范围半径 R</span>
+    <input type="number" id="setR" min="3" max="20" value="8">
+  </div>
+
+  <div class="section">
+    <h4>坐标轴</h4>
+    <div class="field"><span>显示坐标轴</span><input type="checkbox" id="setShowAxis" checked></div>
+    <div class="field"><span>坐标轴颜色</span><input type="color" id="colAxis"></div>
+    <div class="field"><span>坐标轴粗细</span><input type="range" id="setAxisWidth" min="0.5" max="4" step="0.5" value="1.5"></div>
+    <div class="field"><span>显示刻度数字</span><input type="checkbox" id="setShowTick" checked></div>
+    <div class="field"><span>刻度颜色</span><input type="color" id="colTick"></div>
+  </div>
+
+  <div class="section">
+    <h4>网格</h4>
+    <div class="field"><span>显示网格</span><input type="checkbox" id="setShowGrid" checked></div>
+    <div class="field"><span>网格颜色</span><input type="color" id="colGrid"></div>
+    <div class="field"><span>网格粗细</span><input type="range" id="setGridWidth" min="0.3" max="3" step="0.1" value="1"></div>
+    <div class="field"><span>网格透明度</span><input type="range" id="setGridAlpha" min="0" max="1" step="0.05" value="0.55"></div>
+    <div class="field"><span>显示次要网格</span><input type="checkbox" id="setShowMinorGrid" checked></div>
+    <div class="field"><span>次要网格颜色</span><input type="color" id="colMinorGrid"></div>
+    <div class="field"><span>次要网格透明度</span><input type="range" id="setMinorGridAlpha" min="0" max="1" step="0.05" value="0.25"></div>
+  </div>
+
+  <div class="section">
+    <h4>曲线</h4>
+    <div class="field"><span>曲线颜色</span><input type="color" id="colCurve"></div>
+    <div class="field"><span>曲线粗细</span><input type="range" id="setCurveWidth" min="0.5" max="5" step="0.25" value="1.6"></div>
+    <div class="field"><span>曲线透明度</span><input type="range" id="setCurveAlpha" min="0.1" max="1" step="0.05" value="1"></div>
+    <div class="field"><span>绘制动画</span><input type="checkbox" id="setCurveAnim" checked></div>
+    <div class="field"><span>动画时长(ms)</span><input type="number" id="setAnimDuration" min="100" max="3000" step="50" value="600"></div>
+  </div>
+
+  <div class="section">
+    <h4>格子</h4>
+    <div class="field"><span>蓝格颜色</span><input type="color" id="colBlue"></div>
+    <div class="field"><span>红格颜色</span><input type="color" id="colRed"></div>
+    <div class="field"><span>背景颜色</span><input type="color" id="colBg"></div>
+    <div class="field"><span>选中高亮</span><input type="color" id="colHighlight"></div>
+  </div>
+
+  <div class="section">
+    <h4>边角判定</h4>
+    <div class="field"><span>蓝格：接触边算经过</span><input type="checkbox" id="setBlueEdge"></div>
+    <div class="field"><span>蓝格：接触角算经过</span><input type="checkbox" id="setBlueCorner"></div>
+    <div class="field"><span>红格：接触边算违规</span><input type="checkbox" id="setRedEdge"></div>
+    <div class="field"><span>红格：接触角算违规</span><input type="checkbox" id="setRedCorner"></div>
+  </div>
+
+  <button class="close" id="closeSettings">完成</button>
+</div>
+
+<div id="historyPanel" class="panel">
+  <h3>历史函数</h3>
+  <div class="filterBar">
+    <button class="filterBtn active" data-filter="all">全部</button>
+    <button class="filterBtn" data-filter="pass">仅通过</button>
+  </div>
+  <div id="historyList"></div>
+  <button class="close" id="closeHistory">关闭</button>
+</div>
+
+<div id="flash"></div>
+<div id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  const settings = {
+    showAxis: true, axisColor: '#9ca3af', axisWidth: 1.5,
+    showTick: true, tickColor: '#9ca3af',
+    showGrid: true, gridColor: '#eef0f3', gridWidth: 1, gridAlpha: 0.55,
+    showMinorGrid: true, minorGridColor: '#f5f6f8', minorGridAlpha: 0.25,
+    curveColor: '#2563eb', curveWidth: 1.6, curveAlpha: 1,
+    curveAnim: true, animDuration: 600,
+    blue: '#3b82f6', red: '#ef4444', bg: '#ffffff', highlight: '#f59e0b',
+    blueEdge: false, blueCorner: false, redEdge: false, redCorner: false,
+  };
+
+  const state = {
+    R: 8,
+    cells: new Map(),
+    round: 1,
+    phase: 'place',
+    pending: null,
+    equations: [],
+    currentF: null,
+    currentLatex: '',
+    curveSegments: null,
+    animId: null,
+  };
+
+  let historyFilter = 'all';
+
+  const bgLayer = document.getElementById('bgLayer');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const canvasWrap = document.getElementById('canvasWrap');
+  const eqInput = document.getElementById('eqInput');
+  const turnLabel = document.getElementById('turnLabel');
+  const confirmBar = document.getElementById('confirmBar');
+  const confirmText = document.getElementById('confirmText');
+  const flashEl = document.getElementById('flash');
+  const toastEl = document.getElementById('toast');
+  const settingsPanel = document.getElementById('settingsPanel');
+  const historyPanel = document.getElementById('historyPanel');
+
+  let W = 0, H = 0, cx = 0, cy = 0, scale = 44;
+  let dpr = window.devicePixelRatio || 1;
+
+  function cellKey(i, j) { return i + ',' + j; }
+  function parseKey(k) { const a = k.split(','); return [Number(a[0]), Number(a[1])]; }
+  function inRange(i, j) { return i >= -state.R && i < state.R && j >= -state.R && j < state.R; }
+  function snap(v) { return Math.round(v * dpr) / dpr; }
+
+  function computeLayout() {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cx = W / 2;
+    cy = H / 2;
+    const usable = Math.min(W, H) * 0.7;
+    scale = usable / (2 * state.R);
+  }
+
+  /* ===================== 曲线绘制（视觉反馈） ===================== */
+  function computeSegments(F) {
+    const baseStep = 4;
+    const minStep = 1.0;
+    const maxDepth = 5;
+
+    function worldX(sx) { return (sx - cx) / scale; }
+    function worldY(sy) { return (cy - sy) / scale; }
+    function evalF(sx, sy) {
+      const v = F(worldX(sx), worldY(sy));
+      return Number.isFinite(v) ? v : NaN;
+    }
+
+    const segments = [];
+
+    function interp(x0, y0, v0, x1, y1, v1) {
+      if (v0 === v1) return { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+      const t = v0 / (v0 - v1);
+      return { x: x0 + t * (x1 - x0), y: y0 + t * (y1 - y0) };
+    }
+
+    function process(x0, y0, x1, y1, v00, v10, v01, v11, depth) {
+      if (isNaN(v00) || isNaN(v10) || isNaN(v01) || isNaN(v11)) return;
+
+      const cross = [];
+      if ((v00 < 0) !== (v10 < 0)) cross.push('top');
+      if ((v10 < 0) !== (v11 < 0)) cross.push('right');
+      if ((v01 < 0) !== (v11 < 0)) cross.push('bottom');
+      if ((v00 < 0) !== (v01 < 0)) cross.push('left');
+      if (cross.length === 0) return;
+
+      const w = x1 - x0;
+      const h = y1 - y0;
+
+      if (cross.length === 4 && depth < maxDepth && (w > minStep * 2 || h > minStep * 2)) {
+        const mx = (x0 + x1) / 2;
+        const my = (y0 + y1) / 2;
+        const vm0 = evalF(mx, y0);
+        const vm1 = evalF(mx, y1);
+        const v0m = evalF(x0, my);
+        const v1m = evalF(x1, my);
+        const vmm = evalF(mx, my);
+        if (!isNaN(vm0) && !isNaN(vm1) && !isNaN(v0m) && !isNaN(v1m) && !isNaN(vmm)) {
+          process(x0, y0, mx, my, v00, vm0, v0m, vmm, depth + 1);
+          process(mx, y0, x1, my, vm0, v10, vmm, v1m, depth + 1);
+          process(x0, my, mx, y1, v0m, vmm, v01, vm1, depth + 1);
+          process(mx, my, x1, y1, vmm, v1m, vm1, v11, depth + 1);
+          return;
+        }
+      }
+
+      const pts = {};
+      if (cross.includes('top')) pts.top = interp(x0, y0, v00, x1, y0, v10);
+      if (cross.includes('right')) pts.right = interp(x1, y0, v10, x1, y1, v11);
+      if (cross.includes('bottom')) pts.bottom = interp(x0, y1, v01, x1, y1, v11);
+      if (cross.includes('left')) pts.left = interp(x0, y0, v00, x0, y1, v01);
+
+      if (cross.length === 2) {
+        const a = pts[cross[0]], b = pts[cross[1]];
+        segments.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+      } else if (cross.length === 4) {
+        const vc = (v00 + v10 + v01 + v11) / 4;
+        if ((vc < 0) !== (v00 < 0)) {
+          segments.push({ x1: pts.top.x, y1: pts.top.y, x2: pts.left.x, y2: pts.left.y });
+          segments.push({ x1: pts.right.x, y1: pts.right.y, x2: pts.bottom.x, y2: pts.bottom.y });
+        } else {
+          segments.push({ x1: pts.top.x, y1: pts.top.y, x2: pts.right.x, y2: pts.right.y });
+          segments.push({ x1: pts.left.x, y1: pts.left.y, x2: pts.bottom.x, y2: pts.bottom.y });
+        }
+      }
+    }
+
+    const cols = Math.ceil(W / baseStep) + 1;
+    const rows = Math.ceil(H / baseStep) + 1;
+    const vals = [];
+    for (let r = 0; r < rows; r++) {
+      vals[r] = [];
+      for (let c = 0; c < cols; c++) {
+        vals[r][c] = evalF(c * baseStep, r * baseStep);
+      }
+    }
+
+    for (let r = 0; r < rows - 1; r++) {
+      for (let c = 0; c < cols - 1; c++) {
+        process(
+          c * baseStep, r * baseStep,
+          (c + 1) * baseStep, (r + 1) * baseStep,
+          vals[r][c], vals[r][c + 1], vals[r + 1][c], vals[r + 1][c + 1],
+          0
+        );
+      }
+    }
+
+    return segments;
+  }
+
+  function orderSegments(segments) {
+    const precision = 1.5;
+    function qkey(x, y) {
+      return Math.round(x / precision) + ',' + Math.round(y / precision);
+    }
+
+    const nodes = new Map();
+    segments.forEach((seg, idx) => {
+      const k1 = qkey(seg.x1, seg.y1);
+      const k2 = qkey(seg.x2, seg.y2);
+      if (k1 === k2) return;
+      if (!nodes.has(k1)) nodes.set(k1, []);
+      if (!nodes.has(k2)) nodes.set(k2, []);
+      nodes.get(k1).push({ idx });
+      nodes.get(k2).push({ idx });
+    });
+
+    const visited = new Array(segments.length).fill(false);
+    const paths = [];
+
+    function dfs(startKey) {
+      const path = [];
+      let currentKey = startKey;
+
+      while (true) {
+        const list = nodes.get(currentKey) || [];
+        let next = null;
+        for (const entry of list) {
+          if (!visited[entry.idx]) { next = entry; break; }
+        }
+        if (!next) break;
+
+        const seg = segments[next.idx];
+        visited[next.idx] = true;
+
+        const k1 = qkey(seg.x1, seg.y1);
+        let startPt, endPt, endKey;
+        if (k1 === currentKey) {
+          startPt = { x: seg.x1, y: seg.y1 };
+          endPt = { x: seg.x2, y: seg.y2 };
+          endKey = qkey(seg.x2, seg.y2);
+        } else {
+          startPt = { x: seg.x2, y: seg.y2 };
+          endPt = { x: seg.x1, y: seg.y1 };
+          endKey = qkey(seg.x1, seg.y1);
+        }
+
+        if (path.length === 0) path.push(startPt);
+        path.push(endPt);
+
+        currentKey = endKey;
+      }
+
+      return path;
+    }
+
+    const startNodes = [];
+    for (const [k, list] of nodes) {
+      if (list.length === 1) startNodes.push(k);
+    }
+    for (const k of startNodes) {
+      const list = nodes.get(k);
+      if (!list || !list.length) continue;
+      if (visited[list[0].idx]) continue;
+      const path = dfs(k);
+      if (path.length >= 2) paths.push(path);
+    }
+
+    for (let i = 0; i < segments.length; i++) {
+      if (visited[i]) continue;
+      const seg = segments[i];
+      const path = dfs(qkey(seg.x1, seg.y1));
+      if (path.length >= 2) paths.push(path);
+    }
+
+    return paths;
+  }
+
+  function clearCurve() {
+    if (state.animId) {
+      cancelAnimationFrame(state.animId);
+      state.animId = null;
+    }
+    state.curveSegments = null;
+    state.currentF = null;
+    state.currentLatex = '';
+    draw();
+  }
+
+  function renderCurve(F, latex, animate) {
+    clearCurve();
+    state.currentF = F;
+    state.currentLatex = latex;
+
+    const segments = computeSegments(F);
+    if (segments.length === 0) return Promise.resolve();
+
+    const paths = orderSegments(segments);
+    if (paths.length === 0) return Promise.resolve();
+
+    const pathStates = paths.map(path => ({
+      path,
+      total: path.length - 1,
+    }));
+
+    if (!animate || settings.animDuration <= 0) {
+      state.curveSegments = paths.map(path => ({
+        path,
+        drawn: path.length - 1,
+      }));
+      draw();
+      return Promise.resolve();
+    }
+
+    return new Promise(resolve => {
+      const start = performance.now();
+      const duration = Math.max(200, settings.animDuration);
+
+      function step(now) {
+        const t = Math.min(1, (now - start) / duration);
+        state.curveSegments = pathStates.map(ps => ({
+          path: ps.path,
+          drawn: Math.max(1, Math.ceil(t * ps.total)),
+        }));
+        draw();
+
+        if (t < 1) {
+          state.animId = requestAnimationFrame(step);
+        } else {
+          state.animId = null;
+          resolve();
+        }
+      }
+      state.animId = requestAnimationFrame(step);
+    });
+  }
+
+  /* ===================== Canvas 绘制 ===================== */
+  function draw() {
+    const C = settings;
+    ctx.save();
+    ctx.clearRect(0, 0, W, H);
+
+    const iMin = Math.floor(-cx / scale) - 1;
+    const iMax = Math.ceil((W - cx) / scale) + 1;
+    const jMin = Math.floor((cy - H) / scale) - 1;
+    const jMax = Math.ceil(cy / scale) + 1;
+
+    if (C.showMinorGrid) {
+      ctx.globalAlpha = C.minorGridAlpha;
+      ctx.strokeStyle = C.minorGridColor;
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      for (let i = iMin; i <= iMax; i++) {
+        const x = snap(cx + (i + 0.5) * scale);
+        ctx.moveTo(x, 0); ctx.lineTo(x, H);
+      }
+      for (let j = jMin; j <= jMax; j++) {
+        const y = snap(cy - (j + 0.5) * scale);
+        ctx.moveTo(0, y); ctx.lineTo(W, y);
+      }
+      ctx.stroke();
+    }
+
+    if (C.showGrid) {
+      ctx.globalAlpha = C.gridAlpha;
+      ctx.strokeStyle = C.gridColor;
+      ctx.lineWidth = C.gridWidth;
+      ctx.beginPath();
+      for (let i = iMin; i <= iMax; i++) {
+        const x = snap(cx + i * scale);
+        ctx.moveTo(x, 0); ctx.lineTo(x, H);
+      }
+      for (let j = jMin; j <= jMax; j++) {
+        const y = snap(cy - j * scale);
+        ctx.moveTo(0, y); ctx.lineTo(W, y);
+      }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    const rx0 = snap(cx - state.R * scale);
+    const rx1 = snap(cx + state.R * scale);
+    const ry0 = snap(cy - state.R * scale);
+    const ry1 = snap(cy + state.R * scale);
+
+    ctx.fillStyle = 'rgba(0,0,0,0.035)';
+    ctx.fillRect(0, 0, W, ry0);
+    ctx.fillRect(0, ry1, W, H - ry1);
+    ctx.fillRect(0, ry0, rx0, ry1 - ry0);
+    ctx.fillRect(rx1, ry0, W - rx1, ry1 - ry0);
+
+    ctx.strokeStyle = '#d1d5db';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(rx0, ry0, rx1 - rx0, ry1 - ry0);
+
+    if (C.showAxis) {
+      ctx.strokeStyle = C.axisColor;
+      ctx.lineWidth = C.axisWidth;
+      ctx.beginPath();
+      const ax = snap(cx), ay = snap(cy);
+      ctx.moveTo(ax, 0); ctx.lineTo(ax, H);
+      ctx.moveTo(0, ay); ctx.lineTo(W, ay);
+      ctx.stroke();
+    }
+
+    if (C.showTick) {
+      ctx.fillStyle = C.tickColor;
+      ctx.font = '11px "SF Mono", Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      for (let i = -state.R; i <= state.R; i++) {
+        if (i === 0) continue;
+        const x = cx + i * scale;
+        ctx.fillText(String(i), x, cy + 5);
+      }
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      for (let j = -state.R; j <= state.R; j++) {
+        if (j === 0) continue;
+        const y = cy - j * scale;
+        ctx.fillText(String(j), cx - 5, y);
+      }
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'top';
+      ctx.fillText('0', cx - 5, cy + 5);
+    }
+
+    if (state.curveSegments) {
+      ctx.strokeStyle = C.curveColor;
+      ctx.lineWidth = C.curveWidth;
+      ctx.globalAlpha = C.curveAlpha;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (const item of state.curveSegments) {
+        const path = item.path;
+        const drawn = Math.min(item.drawn, path.length - 1);
+        if (drawn <= 0) continue;
+        ctx.beginPath();
+        ctx.moveTo(path[0].x, path[0].y);
+        for (let k = 1; k <= drawn && k < path.length; k++) {
+          ctx.lineTo(path[k].x, path[k].y);
+        }
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    for (const [key, color] of state.cells) {
+      const [i, j] = parseKey(key);
+      const gx0 = snap(cx + i * scale);
+      const gx1 = snap(cx + (i + 1) * scale);
+      const gy0 = snap(cy - (j + 1) * scale);
+      const gy1 = snap(cy - j * scale);
+      const gw = gx1 - gx0;
+      const gh = gy1 - gy0;
+      ctx.globalAlpha = 0.32;
+      ctx.fillStyle = color === 'blue' ? C.blue : C.red;
+      ctx.fillRect(gx0, gy0, gw, gh);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = color === 'blue' ? C.blue : C.red;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(snap(gx0 + 1), snap(gy0 + 1), gw - 2, gh - 2);
+    }
+
+    if (state.pending) {
+      const { i, j, color } = state.pending;
+      const gx0 = snap(cx + i * scale);
+      const gx1 = snap(cx + (i + 1) * scale);
+      const gy0 = snap(cy - (j + 1) * scale);
+      const gy1 = snap(cy - j * scale);
+      ctx.globalAlpha = 0.16;
+      ctx.fillStyle = color === 'blue' ? C.blue : C.red;
+      ctx.fillRect(gx0, gy0, gx1 - gx0, gy1 - gy0);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = C.highlight;
+      ctx.lineWidth = 3;
+      ctx.strokeRect(snap(gx0 + 1.5), snap(gy0 + 1.5), (gx1 - gx0) - 3, (gy1 - gy0) - 3);
+    }
+
+    ctx.restore();
+  }
+
+  /* ===================== MathLive CE ===================== */
+  let _ce = null;
+  async function getCE() {
+    if (_ce) return _ce;
+    const { ComputeEngine } = await import('https://esm.run/@cortex-js/compute-engine');
+    _ce = new ComputeEngine();
+    return _ce;
+  }
+
+  const KNOWN_FUNCS = new Set([
+    'sin', 'cos', 'tan', 'cot', 'sec', 'csc',
+    'asin', 'acos', 'atan', 'arcsin', 'arccos', 'arctan',
+    'sinh', 'cosh', 'tanh',
+    'ln', 'log', 'lg', 'exp',
+    'sqrt', 'cbrt', 'abs',
+    'floor', 'ceil', 'round', 'sign',
+    'min', 'max',
+  ]);
+
+  function preprocessLatex(latex) {
+    let s = latex;
+    s = s.replace(/\\left\s*\(/g, '(');
+    s = s.replace(/\\right\s*\)/g, ')');
+    s = s.replace(/\\left\s*\[/g, '[');
+    s = s.replace(/\\right\s*\]/g, ']');
+    s = s.replace(/\\left\s*\|/g, '|');
+    s = s.replace(/\\right\s*\|/g, '|');
+
+    s = s.replace(/([a-zA-Z]+)\s*\(/g, (match, word) => {
+      if (KNOWN_FUNCS.has(word.toLowerCase())) return match;
+      if (word.length === 1) return word + ' \\cdot (';
+      return match;
+    });
+
+    return s;
+  }
+
+  function mathJsonToFunction(expr) {
+    function compile(node) {
+      if (typeof node === 'number') return () => node;
+      if (typeof node === 'string') {
+        if (node === 'x') return (x) => x;
+        if (node === 'y') return (_, y) => y;
+        if (node === 'Pi') return () => Math.PI;
+        if (node === 'ExponentialE') return () => Math.E;
+        if (node === 'Nothing') return () => NaN;
+        return () => NaN;
+      }
+      if (!Array.isArray(node)) return () => NaN;
+      const op = node[0];
+      const args = node.slice(1);
+
+      if (op === 'Apply' && args.length >= 2) {
+        const fn = args[0];
+        const argFns = args.slice(1).map(compile);
+        if (typeof fn === 'string' && /^[a-zA-Z]$/.test(fn)) {
+          const varFn = compile(fn);
+          return (x, y) => varFn(x, y) * argFns.reduce((p, f) => p * f(x, y), 1);
+        }
+        return () => NaN;
+      }
+      if (typeof op === 'string' && /^[a-zA-Z]$/.test(op) && args.length > 0) {
+        const varFn = compile(op);
+        const argFns = args.map(compile);
+        return (x, y) => varFn(x, y) * argFns.reduce((p, f) => p * f(x, y), 1);
+      }
+
+      const fns = args.map(compile);
+      switch (op) {
+        case 'Add': return (x, y) => fns.reduce((s, f) => s + f(x, y), 0);
+        case 'Subtract': return (x, y) => fns[0](x, y) - fns[1](x, y);
+        case 'Multiply': return (x, y) => fns.reduce((p, f) => p * f(x, y), 1);
+        case 'Divide': return (x, y) => fns[0](x, y) / fns[1](x, y);
+        case 'Negate': return (x, y) => -fns[0](x, y);
+        case 'Power': return (x, y) => {
+          const a = fns[0](x, y), b = fns[1](x, y);
+          if (a < 0 && !Number.isInteger(b)) return NaN;
+          return Math.pow(a, b);
+        };
+        case 'Sqrt': return (x, y) => Math.sqrt(fns[0](x, y));
+        case 'Root': return (x, y) => Math.pow(fns[0](x, y), 1 / fns[1](x, y));
+        case 'Abs': return (x, y) => Math.abs(fns[0](x, y));
+        case 'Sin': return (x, y) => Math.sin(fns[0](x, y));
+        case 'Cos': return (x, y) => Math.cos(fns[0](x, y));
+        case 'Tan': return (x, y) => Math.tan(fns[0](x, y));
+        case 'Ln': return (x, y) => Math.log(fns[0](x, y));
+        case 'Log': return (x, y) => Math.log10(fns[0](x, y));
+        case 'Exp': return (x, y) => Math.exp(fns[0](x, y));
+        case 'Floor': return (x, y) => Math.floor(fns[0](x, y));
+        case 'Ceil': return (x, y) => Math.ceil(fns[0](x, y));
+        case 'Round': return (x, y) => Math.round(fns[0](x, y));
+        case 'Sign': return (x, y) => Math.sign(fns[0](x, y));
+        case 'Min': return (x, y) => Math.min(...args.map(f => f(x, y)));
+        case 'Max': return (x, y) => Math.max(...args.map(f => f(x, y)));
+        case 'Equal': return (x, y) => fns[0](x, y) - fns[1](x, y);
+        case 'Less': return (x, y) => (fns[0](x, y) < fns[1](x, y) ? -1 : 1);
+        case 'Greater': return (x, y) => (fns[0](x, y) > fns[1](x, y) ? -1 : 1);
+        case 'LessEqual': return (x, y) => (fns[0](x, y) <= fns[1](x, y) ? -1 : 1);
+        case 'GreaterEqual': return (x, y) => (fns[0](x, y) >= fns[1](x, y) ? -1 : 1);
+        case 'And': return (x, y) => fns.every(f => f(x, y) < 0) ? -1 : 1;
+        case 'Or': return (x, y) => fns.some(f => f(x, y) < 0) ? -1 : 1;
+        case 'Not': return (x, y) => (fns[0](x, y) < 0 ? 1 : -1);
+        case 'If': return (x, y) => fns[0](x, y) < 0 ? fns[1](x, y) : fns[2](x, y);
+        case 'Tuple': return (x, y) => fns[0](x, y);
+        case 'Rational': return () => args[0] / args[1];
+        default: return () => NaN;
+      }
+    }
+    return compile(expr);
+  }
+
+  function extractNumber(v) {
+    if (v === null || v === undefined) return NaN;
+    if (typeof v === 'number') return v;
+    if (typeof v.valueOf === 'function') {
+      const n = v.valueOf();
+      if (typeof n === 'number') return n;
+    }
+    if (typeof v.N === 'function') {
+      return extractNumber(v.N());
+    }
+    if (typeof v.re === 'number' && (v.im === undefined || v.im === 0)) {
+      return v.re;
+    }
+    return NaN;
+  }
+
+  function makeCEFunction(ce, expr) {
+    return (x, y) => {
+      try {
+        const sub = expr.subs({ x, y });
+        let result;
+        if (sub && typeof sub.evaluate === 'function') {
+          result = sub.evaluate();
+        } else if (sub && typeof sub.N === 'function') {
+          result = sub.N();
+        } else {
+          result = sub;
+        }
+        return extractNumber(result);
+      } catch (e) {
+        return NaN;
+      }
+    };
+  }
+
+  async function parseLatexToFunction(latex) {
+    let s = latex.trim();
+    if (!s) return { error: '请输入方程' };
+
+    if (s.includes('=')) {
+      const parts = s.split('=');
+      if (parts.length !== 2) return { error: '只能有一个等号' };
+      s = `(${parts[0]}) - (${parts[1]})`;
+    }
+
+    s = preprocessLatex(s);
+
+    let ce, expr;
+    try {
+      ce = await getCE();
+      expr = ce.parse(s);
+    } catch (e) {
+      return { error: '无法解析：' + e.message };
+    }
+    if (!expr || !expr.json) return { error: '无法解析方程' };
+
+    let F = mathJsonToFunction(expr.json);
+    const testPoints = [[0.5, 0.5], [1.2, 0.8], [-0.5, -0.5], [2.3, 1.7], [0, 0]];
+    const ok1 = testPoints.some(([x, y]) => Number.isFinite(F(x, y)));
+
+    if (!ok1) {
+      F = makeCEFunction(ce, expr);
+      const ok2 = testPoints.some(([x, y]) => Number.isFinite(F(x, y)));
+      if (!ok2) {
+        return { error: '表达式不可求值' };
+      }
+    }
+
+    return { F, latex: latex.trim() };
+  }
+
+  /* ===================== ★★★ 精确求交判定 ★★★ =====================
+     策略：
+     1. 先扫四条边界（高精度）—— 识别边/角上的交点
+     2. 若边界无任何交点 → 立即返回（格子未与曲线接触）
+     3. 若有边界交点但无内部交点 → 进行内部双向扫描
+        —— 关键：内部扫描可以发现"曲线从角点/窄带进入格子内部"的情况
+        —— 例如 y=-100x(x-8) 在 (0,0) 格子：
+           角 (0,0) 与顶边 (0.00125, 1) 有交点，
+           但曲线从 (0,0) 到顶边穿过格子内部狭长一段，
+           内部扫描线 y=0.5 会在 x≈0.000625 处找到内部根。
+     4. 每条扫描线上的根都用 50 次二分法精确定位，亚像素精度
+  ================================================================= */
+  function analyzeCell(i, j, F) {
+    if (!F) return { interior: false, edge: false, corner: false };
+
+    const x0 = i, x1 = i + 1;
+    const y0 = j, y1 = j + 1;
+    const EPS = 1e-9;
+
+    let interior = false;
+    let edge = false;
+    let corner = false;
+
+    function classifyPoint(wx, wy) {
+      const onL = Math.abs(wx - x0) <= EPS;
+      const onR = Math.abs(wx - x1) <= EPS;
+      const onB = Math.abs(wy - y0) <= EPS;
+      const onT = Math.abs(wy - y1) <= EPS;
+      if ((onL || onR) && (onB || onT)) return 'corner';
+      if (onL || onR || onB || onT) return 'edge';
+      return 'interior';
+    }
+
+    function crossesZero(a, b) {
+      if (a === 0 || b === 0) return true;
+      return (a < 0) !== (b < 0);
+    }
+
+    function bisect(g, a, b, fa) {
+      if (fa === 0) return a;
+      const fb0 = g(b);
+      if (!Number.isFinite(fb0)) return a;
+      if (fb0 === 0) return b;
+      for (let k = 0; k < 50; k++) {
+        const m = (a + b) / 2;
+        const fm = g(m);
+        if (!Number.isFinite(fm)) return (a + b) / 2;
+        if (fm === 0) return m;
+        if ((fa < 0) !== (fm < 0)) { b = m; }
+        else { a = m; fa = fm; }
+      }
+      return (a + b) / 2;
+    }
+
+    // 沿一条扫描线扫描并检测符号变化；找到 interior 时立即返回 true
+    // fixedIsY=true : 固定 y=fixed，沿 x 从 start 扫到 end
+    // fixedIsY=false: 固定 x=fixed，沿 y 从 start 扫到 end
+    function scanLine(fixedIsY, fixed, start, end, segs) {
+      const g = fixedIsY ? (t) => F(t, fixed) : (t) => F(fixed, t);
+      let prevT = start;
+      let prevV = g(prevT);
+      for (let s = 1; s <= segs; s++) {
+        const t = start + (end - start) * s / segs;
+        const v = g(t);
+        if (Number.isFinite(prevV) && Number.isFinite(v) && crossesZero(prevV, v)) {
+          const root = bisect(g, prevT, t, prevV);
+          const wx = fixedIsY ? root : fixed;
+          const wy = fixedIsY ? fixed : root;
+          const cls = classifyPoint(wx, wy);
+          if (cls === 'interior') { interior = true; return true; }
+          else if (cls === 'edge') edge = true;
+          else if (cls === 'corner') corner = true;
+        }
+        prevT = t; prevV = v;
+      }
+      return false;
+    }
+
+    // ===== Phase 1：四条边界高精度扫描 =====
+    const NB = 64;
+    if (scanLine(true, y0, x0, x1, NB)) return { interior: true, edge: true, corner: true };  // 底边
+    if (scanLine(true, y1, x0, x1, NB)) return { interior: true, edge: true, corner: true };  // 顶边
+    if (scanLine(false, x0, y0, y1, NB)) return { interior: true, edge: true, corner: true }; // 左边
+    if (scanLine(false, x1, y0, y1, NB)) return { interior: true, edge: true, corner: true }; // 右边
+
+    // ===== 若边界完全无交点 → 曲线未触及此格 =====
+    if (!edge && !corner) {
+      return { interior: false, edge: false, corner: false };
+    }
+
+    // ===== Phase 2：内部双向扫描 =====
+    // 关键：捕获"曲线经过角/边进入内部"的情况（例如陡峭抛物线在 (0,0) 格内的窄带穿越）
+    const NI = 24;
+    // 水平扫描线（固定 y，沿 x 扫）
+    for (let k = 1; k < NI; k++) {
+      const wy = y0 + (y1 - y0) * k / NI;
+      if (scanLine(true, wy, x0, x1, NI)) {
+        return { interior: true, edge: true, corner: true };
+      }
+    }
+    // 垂直扫描线（固定 x，沿 y 扫）
+    for (let k = 1; k < NI; k++) {
+      const wx = x0 + (x1 - x0) * k / NI;
+      if (scanLine(false, wx, y0, y1, NI)) {
+        return { interior: true, edge: true, corner: true };
+      }
+    }
+
+    return { interior: false, edge, corner };
+  }
+
+  function judgeEquation(F) {
+    const problems = [];
+    for (const [key, color] of state.cells) {
+      const [i, j] = parseKey(key);
+      const r = analyzeCell(i, j, F);
+      if (color === 'blue') {
+        const passed = r.interior
+          || (settings.blueEdge && r.edge)
+          || (settings.blueCorner && r.corner);
+        if (!passed) problems.push(`蓝格 (${i}, ${j}) 未被经过`);
+      } else {
+        const violated = r.interior
+          || (settings.redEdge && r.edge)
+          || (settings.redCorner && r.corner);
+        if (violated) problems.push(`红格 (${i}, ${j}) 被穿过`);
+      }
+    }
+    return problems;
+  }
+
+  /* ===================== 规则检查 ===================== */
+  function check3x3(i, j) {
+    for (let di = -1; di <= 1; di++) {
+      for (let dj = -1; dj <= 1; dj++) {
+        const ci = i + di, cj = j + dj;
+        let count = 0;
+        for (let a = ci - 1; a <= ci + 1; a++) {
+          for (let b = cj - 1; b <= cj + 1; b++) {
+            if (state.cells.has(cellKey(a, b))) count++;
+          }
+        }
+        if (count + 1 > 3) return false;
+      }
+    }
+    return true;
+  }
+
+  function checkSolvable() {
+    const blues = [];
+    for (const [key, color] of state.cells) {
+      if (color === 'blue') blues.push(parseKey(key));
+    }
+    if (blues.length <= 1) return true;
+
+    const visited = new Set();
+    const queue = [blues[0]];
+    visited.add(cellKey(blues[0][0], blues[0][1]));
+    let head = 0;
+    while (head < queue.length) {
+      const [x, y] = queue[head++];
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx, ny = y + dy;
+          if (!inRange(nx, ny)) continue;
+          const k = cellKey(nx, ny);
+          if (visited.has(k)) continue;
+          if (state.cells.get(k) === 'red') continue;
+          visited.add(k);
+          queue.push([nx, ny]);
+        }
+      }
+    }
+    for (const b of blues) {
+      if (!visited.has(cellKey(b[0], b[1]))) return false;
+    }
+    return true;
+  }
+
+  /* ===================== 交互 ===================== */
+  function failPlacement(msg) {
+    showToast(msg);
+    canvasWrap.classList.remove('shake');
+    void canvasWrap.offsetWidth;
+    canvasWrap.classList.add('shake');
+    flashEl.classList.add('show');
+    setTimeout(() => flashEl.classList.remove('show'), 280);
+    state.pending = null;
+    updateUI();
+    draw();
+  }
+
+  function confirmPlacement() {
+    if (!state.pending) return;
+    const { i, j, color } = state.pending;
+    state.cells.set(cellKey(i, j), color);
+    state.pending = null;
+    state.phase = 'solve';
+    updateUI();
+    draw();
+  }
+
+  function cancelPlacement() {
+    state.pending = null;
+    updateUI();
+    draw();
+  }
+
+  async function judge() {
+    if (state.phase !== 'solve') { showToast('当前不是解题阶段'); return; }
+    const latex = eqInput.value.trim();
+    if (!latex) { showToast('请输入方程'); return; }
+
+    const parsed = await parseLatexToFunction(latex);
+    if (parsed.error) { showToast(parsed.error); return; }
+
+    await renderCurve(parsed.F, latex, settings.curveAnim);
+
+    const problems = judgeEquation(parsed.F);
+    const result = problems.length === 0 ? 'pass' : 'fail';
+
+    state.equations.push({
+      latex,
+      time: new Date(),
+      result,
+      round: state.round,
+      problems,
+    });
+
+    if (result === 'pass') {
+      showToast('通过！进入下一轮');
+      state.phase = 'place';
+      state.round++;
+      eqInput.value = '';
+      updateUI();
+      draw();
+    } else {
+      const detail = problems.length === 1
+        ? problems[0]
+        : `${problems[0]} 等 ${problems.length} 项`;
+      showToast('未通过：' + detail);
+      draw();
+    }
+  }
+
+  function lose() {
+    if (state.phase !== 'solve') { showToast('当前不是解题阶段'); return; }
+    state.equations.push({
+      latex: eqInput.value.trim() || '(未提交)',
+      time: new Date(),
+      result: 'unknown',
+      round: state.round,
+      problems: [],
+    });
+    state.phase = 'place';
+    state.round++;
+    eqInput.value = '';
+    showToast('已判负，进入下一轮');
+    updateUI();
+    draw();
+  }
+
+  /* ===================== UI ===================== */
+  function updateUI() {
+    const placer = state.round % 2 === 1 ? '甲' : '乙';
+    const solver = state.round % 2 === 1 ? '乙' : '甲';
+
+    if (state.phase === 'place') {
+      turnLabel.textContent = `第 ${state.round} 轮 · ${placer} 放格`;
+      confirmBar.classList.remove('show');
+      eqInput.disabled = true;
+      document.getElementById('judgeBtn').disabled = true;
+      document.getElementById('loseBtn').disabled = true;
+    } else {
+      turnLabel.textContent = `第 ${state.round} 轮 · ${solver} 解方程`;
+      eqInput.disabled = false;
+      document.getElementById('judgeBtn').disabled = false;
+      document.getElementById('loseBtn').disabled = false;
+    }
+
+    if (state.pending) {
+      confirmBar.classList.add('show');
+      const c = state.pending.color === 'blue' ? '蓝格（要求）' : '红格（禁止）';
+      confirmText.textContent = `放置 ${c} (${state.pending.i}, ${state.pending.j})`;
+    } else {
+      confirmBar.classList.remove('show');
+    }
+  }
+
+  let toastTimer;
+  function showToast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
+  }
+
+  /* ===================== 历史 ===================== */
+  function renderHistory() {
+    const list = document.getElementById('historyList');
+    list.innerHTML = '';
+    const filtered = state.equations.filter(eq => historyFilter === 'all' || eq.result === 'pass');
+    if (filtered.length === 0) {
+      list.innerHTML = '<div class="empty">暂无历史</div>';
+      return;
+    }
+    const hasMathSpan = !!customElements.get('math-span');
+    const hasMathField = !!customElements.get('math-field');
+    for (let k = filtered.length - 1; k >= 0; k--) {
+      const eq = filtered[k];
+      const div = document.createElement('div');
+      div.className = 'histItem';
+      const cls = eq.result === 'pass' ? 'res-pass'
+                : eq.result === 'fail' ? 'res-fail' : 'res-unknown';
+      const txt = eq.result === 'pass' ? '通过'
+                : eq.result === 'fail' ? '未通过' : '判负';
+
+      // 使用 MathLive 静态渲染组件 <math-span>（推荐）
+      const eqSpan = document.createElement('span');
+      eqSpan.className = 'eqText';
+      if (hasMathSpan) {
+        const ms = document.createElement('math-span');
+        ms.textContent = eq.latex;
+        eqSpan.appendChild(ms);
+      } else if (hasMathField) {
+        const mf = document.createElement('math-field');
+        mf.setAttribute('read-only', '');
+        mf.value = eq.latex;
+        mf.style.setProperty('display', 'inline-block');
+        mf.style.setProperty('min-height', '0');
+        mf.style.setProperty('padding', '0');
+        mf.style.setProperty('border', 'none');
+        mf.style.setProperty('background', 'transparent');
+        mf.style.setProperty('font-size', '15px');
+        mf.style.setProperty('box-shadow', 'none');
+        eqSpan.appendChild(mf);
+      } else {
+        eqSpan.textContent = eq.latex;
+      }
+
+      const metaSpan = document.createElement('span');
+      metaSpan.className = 'meta';
+      metaSpan.innerHTML = `<span class="${cls}">${txt}</span> · 第${eq.round}轮`;
+
+      div.appendChild(eqSpan);
+      div.appendChild(metaSpan);
+
+      div.onclick = async () => {
+        eqInput.value = eq.latex;
+        const parsed = await parseLatexToFunction(eq.latex);
+        if (!parsed.error) {
+          renderCurve(parsed.F, eq.latex, false);
+        }
+        closePanel(historyPanel);
+      };
+      list.appendChild(div);
+    }
+  }
+
+  function openPanel(p) { p.classList.add('show'); }
+  function closePanel(p) { p.classList.remove('show'); }
+
+  function syncSettingsUI() {
+    document.getElementById('setR').value = state.R;
+    document.getElementById('setShowAxis').checked = settings.showAxis;
+    document.getElementById('colAxis').value = settings.axisColor;
+    document.getElementById('setAxisWidth').value = settings.axisWidth;
+    document.getElementById('setShowTick').checked = settings.showTick;
+    document.getElementById('colTick').value = settings.tickColor;
+    document.getElementById('setShowGrid').checked = settings.showGrid;
+    document.getElementById('colGrid').value = settings.gridColor;
+    document.getElementById('setGridWidth').value = settings.gridWidth;
+    document.getElementById('setGridAlpha').value = settings.gridAlpha;
+    document.getElementById('setShowMinorGrid').checked = settings.showMinorGrid;
+    document.getElementById('colMinorGrid').value = settings.minorGridColor;
+    document.getElementById('setMinorGridAlpha').value = settings.minorGridAlpha;
+    document.getElementById('colCurve').value = settings.curveColor;
+    document.getElementById('setCurveWidth').value = settings.curveWidth;
+    document.getElementById('setCurveAlpha').value = settings.curveAlpha;
+    document.getElementById('setCurveAnim').checked = settings.curveAnim;
+    document.getElementById('setAnimDuration').value = settings.animDuration;
+    document.getElementById('colBlue').value = settings.blue;
+    document.getElementById('colRed').value = settings.red;
+    document.getElementById('colBg').value = settings.bg;
+    document.getElementById('colHighlight').value = settings.highlight;
+    document.getElementById('setBlueEdge').checked = settings.blueEdge;
+    document.getElementById('setBlueCorner').checked = settings.blueCorner;
+    document.getElementById('setRedEdge').checked = settings.redEdge;
+    document.getElementById('setRedCorner').checked = settings.redCorner;
+  }
+
+  function openSettings() {
+    syncSettingsUI();
+    openPanel(settingsPanel);
+  }
+
+  function resetGame() {
+    state.cells.clear();
+    state.round = 1;
+    state.phase = 'place';
+    state.pending = null;
+    state.equations = [];
+    clearCurve();
+    eqInput.value = '';
+    updateUI();
+    draw();
+  }
+
+  /* ===================== 括号自动补全 ===================== */
+  function findUnclosed(latex) {
+    const stack = [];
+    let i = 0;
+    while (i < latex.length) {
+      if (latex.startsWith('\\left(', i)) { stack.push({ close: '\\right)' }); i += 6; continue; }
+      if (latex.startsWith('\\left[', i)) { stack.push({ close: '\\right]' }); i += 6; continue; }
+      if (latex.startsWith('\\left\\{', i)) { stack.push({ close: '\\right\\}' }); i += 7; continue; }
+      if (latex.startsWith('\\right)', i)) { if (stack.length) stack.pop(); i += 7; continue; }
+      if (latex.startsWith('\\right]', i)) { if (stack.length) stack.pop(); i += 7; continue; }
+      if (latex.startsWith('\\right\\}', i)) { if (stack.length) stack.pop(); i += 8; continue; }
+      const ch = latex[i];
+      if (ch === '(') { stack.push({ close: ')' }); i++; continue; }
+      if (ch === '[') { stack.push({ close: ']' }); i++; continue; }
+      if (ch === ')') { if (stack.length) stack.pop(); i++; continue; }
+      if (ch === ']') { if (stack.length) stack.pop(); i++; continue; }
+      i++;
+    }
+    return stack;
+  }
+
+  function handleAutoClose(e) {
+    if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    const latex = eqInput.value || '';
+    if (!latex) return;
+    const stack = findUnclosed(latex);
+    if (!stack.length) return;
+    const top = stack[stack.length - 1];
+
+    const pos = eqInput.position;
+    if (typeof pos !== 'number') return;
+
+    const atEnd = pos >= latex.length;
+    let beforeRight = false;
+    if (!atEnd) {
+      const rest = latex.slice(pos);
+      if (/^\s*\\right/.test(rest)) beforeRight = true;
+    }
+    if (!atEnd && !beforeRight) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      eqInput.executeCommand(['insert', top.close]);
+    } catch (err) {
+      eqInput.insert(top.close);
+    }
+  }
+
+  /* ===================== 事件 ===================== */
+  function bindEvents() {
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+    canvas.addEventListener('mousedown', e => {
+      e.preventDefault();
+      if (state.phase !== 'place') { showToast('当前不是放置阶段'); return; }
+      const rect = canvas.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const i = Math.floor((sx - cx) / scale);
+      const j = Math.floor((cy - sy) / scale);
+      if (!inRange(i, j)) return;
+      const key = cellKey(i, j);
+      if (state.cells.has(key)) return;
+      const color = e.button === 2 ? 'red' : 'blue';
+
+      if (state.curveSegments) {
+        clearCurve();
+      }
+
+      if (!check3x3(i, j)) {
+        failPlacement('违反 3×3 规则（任意 3×3 区域最多 3 个格子）');
+        return;
+      }
+      state.cells.set(key, color);
+      const ok = checkSolvable();
+      state.cells.delete(key);
+      if (!ok) {
+        failPlacement('此放置会使蓝格被红色隔离，无解');
+        return;
+      }
+
+      state.pending = { i, j, color };
+      updateUI();
+      draw();
+    });
+
+    document.getElementById('confirmBtn').addEventListener('click', confirmPlacement);
+    document.getElementById('cancelBtn').addEventListener('click', cancelPlacement);
+    document.getElementById('judgeBtn').addEventListener('click', judge);
+    document.getElementById('loseBtn').addEventListener('click', lose);
+
+    eqInput.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight') {
+        handleAutoClose(e);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        judge();
+      }
+    }, true);
+
+    document.getElementById('settingsBtn').addEventListener('click', openSettings);
+    document.getElementById('closeSettings').addEventListener('click', () => closePanel(settingsPanel));
+
+    document.getElementById('historyBtn').addEventListener('click', () => {
+      renderHistory();
+      openPanel(historyPanel);
+    });
+    document.getElementById('closeHistory').addEventListener('click', () => closePanel(historyPanel));
+
+    document.querySelectorAll('.filterBtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        historyFilter = btn.dataset.filter;
+        document.querySelectorAll('.filterBtn').forEach(b => b.classList.toggle('active', b === btn));
+        renderHistory();
+      });
+    });
+
+    document.getElementById('setR').addEventListener('change', e => {
+      let v = parseInt(e.target.value, 10);
+      if (isNaN(v)) v = state.R;
+      v = Math.max(3, Math.min(20, v));
+      e.target.value = v;
+      if (v !== state.R) {
+        state.R = v;
+        computeLayout();
+        resetGame();
+        showToast('已修改范围并重置游戏');
+      }
+    });
+
+    function bindColor(id, key) {
+      document.getElementById(id).addEventListener('input', e => {
+        settings[key] = e.target.value;
+        if (key === 'bg') bgLayer.style.background = settings.bg;
+        draw();
+      });
+    }
+    function bindRange(id, key, parse = parseFloat) {
+      document.getElementById(id).addEventListener('input', e => {
+        settings[key] = parse(e.target.value);
+        draw();
+      });
+    }
+    function bindCheck(id, key) {
+      document.getElementById(id).addEventListener('change', e => {
+        settings[key] = e.target.checked;
+        draw();
+      });
+    }
+
+    bindCheck('setShowAxis', 'showAxis');
+    bindColor('colAxis', 'axisColor');
+    bindRange('setAxisWidth', 'axisWidth');
+    bindCheck('setShowTick', 'showTick');
+    bindColor('colTick', 'tickColor');
+
+    bindCheck('setShowGrid', 'showGrid');
+    bindColor('colGrid', 'gridColor');
+    bindRange('setGridWidth', 'gridWidth');
+    bindRange('setGridAlpha', 'gridAlpha');
+    bindCheck('setShowMinorGrid', 'showMinorGrid');
+    bindColor('colMinorGrid', 'minorGridColor');
+    bindRange('setMinorGridAlpha', 'minorGridAlpha');
+
+    bindColor('colCurve', 'curveColor');
+    bindRange('setCurveWidth', 'curveWidth');
+    bindRange('setCurveAlpha', 'curveAlpha');
+    bindCheck('setCurveAnim', 'curveAnim');
+    bindRange('setAnimDuration', 'animDuration', v => parseInt(v, 10));
+
+    bindColor('colBlue', 'blue');
+    bindColor('colRed', 'red');
+    bindColor('colBg', 'bg');
+    bindColor('colHighlight', 'highlight');
+
+    bindCheck('setBlueEdge', 'blueEdge');
+    bindCheck('setBlueCorner', 'blueCorner');
+    bindCheck('setRedEdge', 'redEdge');
+    bindCheck('setRedCorner', 'redCorner');
+
+    window.addEventListener('resize', () => {
+      computeLayout();
+      draw();
+    });
+  }
+
+  /* ===================== 启动 ===================== */
+  async function init() {
+    if (!customElements.get('math-field')) {
+      try { await customElements.whenDefined('math-field'); } catch (e) { /* ignore */ }
+    }
+    computeLayout();
+    bgLayer.style.background = settings.bg;
+    bindEvents();
+    updateUI();
+    draw();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>
