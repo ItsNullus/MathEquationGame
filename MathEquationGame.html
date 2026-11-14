@@ -5,6 +5,8 @@
 <title></title>
 <script defer src="https://cdn.jsdelivr.net/npm/mathlive"></script>
 <script src="https://cdn.jsdelivr.net/npm/marchingsquares@1.3.3/dist/marchingsquares.min.js"></script>
+<!-- ★ JSXGraph：显式 functiongraph + 隐式 ImplicitPlot -->
+<script src="https://cdn.jsdelivr.net/npm/jsxgraph@1.14.0/distrib/jsxgraphcore.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
@@ -90,6 +92,8 @@
   }
   math-field:focus-within { border-color: #6366f1; }
   math-field[disabled] { background: #f9fafb; opacity: 0.5; cursor: default; }
+
+  /* 隐藏 math-field 右侧的菜单切换按钮（三个杠） */
   math-field::part(menu-toggle) {
     display: none;
   }
@@ -353,102 +357,182 @@
     scale = usable / (2 * state.R);
   }
 
-  /* ===================== 曲线绘制（视觉反馈） ===================== */
-  function computeSegments(F) {
-    const baseStep = 4;
-    const minStep = 1.0;
-    const maxDepth = 5;
+  /* ===================== ★ 曲线绘制：双轨制 =====================
+     · 显式 y = g(x)：走 JSXGraph functiongraph 自适应采样，能正确处理高频（如 sin(100x)）与渐近线
+     · 隐式 F(x,y)=0：走 JSXGraph ImplicitPlot 零等值线追踪，能处理闭合曲线、多分支
+  ============================================================ */
+  let _offBoard = null;
+  function getOffscreenBoard() {
+    if (_offBoard) return _offBoard;
+    const div = document.createElement('div');
+    div.style.cssText = 'position:absolute; left:-9999px; top:-9999px; width:1px; height:1px;';
+    document.body.appendChild(div);
+    _offBoard = JXG.JSXGraph.initBoard(div, {
+      boundingbox: [-10, 10, 10, -10],
+      axis: false,
+      showCopyright: false,
+      showNavigation: false,
+    });
+    return _offBoard;
+  }
 
-    function worldX(sx) { return (sx - cx) / scale; }
-    function worldY(sy) { return (cy - sy) / scale; }
-    function evalF(sx, sy) {
-      const v = F(worldX(sx), worldY(sy));
-      return Number.isFinite(v) ? v : NaN;
-    }
+    /* ===================== 显函数自适应采样 =====================
+     与 Desmos / JSXGraph 内部算法一致：均匀基础采样 + 递归细分。
+     自适应规则：相邻点 y 变化超过 12 像素则细分；
+     跳变检测：斜率异常大且 y 值超出屏幕范围，则断开（处理 tan 等渐近线）。
+  ============================================================ */
+  function computeSegmentsExplicit(g) {
+    const xMinW = -cx / scale;
+    const xMaxW = (W - cx) / scale;
+    const yMinW = (cy - H) / scale;
+    const yMaxW = cy / scale;
+
+    const xSpan = xMaxW - xMinW;
+    const ySpan = yMaxW - yMinW;
+    const maxSlope = 50 * ySpan / xSpan;
 
     const segments = [];
 
-    function interp(x0, y0, v0, x1, y1, v1) {
-      if (v0 === v1) return { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
-      const t = v0 / (v0 - v1);
-      return { x: x0 + t * (x1 - x0), y: y0 + t * (y1 - y0) };
-    }
-
-    function process(x0, y0, x1, y1, v00, v10, v01, v11, depth) {
-      if (isNaN(v00) || isNaN(v10) || isNaN(v01) || isNaN(v11)) return;
-
-      const cross = [];
-      if ((v00 < 0) !== (v10 < 0)) cross.push('top');
-      if ((v10 < 0) !== (v11 < 0)) cross.push('right');
-      if ((v01 < 0) !== (v11 < 0)) cross.push('bottom');
-      if ((v00 < 0) !== (v01 < 0)) cross.push('left');
-      if (cross.length === 0) return;
-
-      const w = x1 - x0;
-      const h = y1 - y0;
-
-      if (cross.length === 4 && depth < maxDepth && (w > minStep * 2 || h > minStep * 2)) {
-        const mx = (x0 + x1) / 2;
-        const my = (y0 + y1) / 2;
-        const vm0 = evalF(mx, y0);
-        const vm1 = evalF(mx, y1);
-        const v0m = evalF(x0, my);
-        const v1m = evalF(x1, my);
-        const vmm = evalF(mx, my);
-        if (!isNaN(vm0) && !isNaN(vm1) && !isNaN(v0m) && !isNaN(v1m) && !isNaN(vmm)) {
-          process(x0, y0, mx, my, v00, vm0, v0m, vmm, depth + 1);
-          process(mx, y0, x1, my, vm0, v10, vmm, v1m, depth + 1);
-          process(x0, my, mx, y1, v0m, vmm, v01, vm1, depth + 1);
-          process(mx, my, x1, y1, vmm, v1m, vm1, v11, depth + 1);
-          return;
-        }
-      }
-
-      const pts = {};
-      if (cross.includes('top')) pts.top = interp(x0, y0, v00, x1, y0, v10);
-      if (cross.includes('right')) pts.right = interp(x1, y0, v10, x1, y1, v11);
-      if (cross.includes('bottom')) pts.bottom = interp(x0, y1, v01, x1, y1, v11);
-      if (cross.includes('left')) pts.left = interp(x0, y0, v00, x0, y1, v01);
-
-      if (cross.length === 2) {
-        const a = pts[cross[0]], b = pts[cross[1]];
-        segments.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y });
-      } else if (cross.length === 4) {
-        const vc = (v00 + v10 + v01 + v11) / 4;
-        if ((vc < 0) !== (v00 < 0)) {
-          segments.push({ x1: pts.top.x, y1: pts.top.y, x2: pts.left.x, y2: pts.left.y });
-          segments.push({ x1: pts.right.x, y1: pts.right.y, x2: pts.bottom.x, y2: pts.bottom.y });
-        } else {
-          segments.push({ x1: pts.top.x, y1: pts.top.y, x2: pts.right.x, y2: pts.right.y });
-          segments.push({ x1: pts.left.x, y1: pts.left.y, x2: pts.bottom.x, y2: pts.bottom.y });
-        }
+    function evalSafe(x) {
+      try {
+        const v = g(x);
+        return Number.isFinite(v) ? v : NaN;
+      } catch (e) {
+        return NaN;
       }
     }
 
-    const cols = Math.ceil(W / baseStep) + 1;
-    const rows = Math.ceil(H / baseStep) + 1;
-    const vals = [];
-    for (let r = 0; r < rows; r++) {
-      vals[r] = [];
-      for (let c = 0; c < cols; c++) {
-        vals[r][c] = evalF(c * baseStep, r * baseStep);
-      }
+    function isJump(ya, yb, dx) {
+      if (!Number.isFinite(ya) || !Number.isFinite(yb)) return false;
+      if (dx < 1e-12) return false;
+      const slope = Math.abs(yb - ya) / dx;
+      return slope > maxSlope && (Math.abs(ya) > ySpan || Math.abs(yb) > ySpan);
     }
 
-    for (let r = 0; r < rows - 1; r++) {
-      for (let c = 0; c < cols - 1; c++) {
-        process(
-          c * baseStep, r * baseStep,
-          (c + 1) * baseStep, (r + 1) * baseStep,
-          vals[r][c], vals[r][c + 1], vals[r + 1][c], vals[r + 1][c + 1],
-          0
-        );
+    function process(xa, ya, xb, yb, depth) {
+      if (!Number.isFinite(ya) || !Number.isFinite(yb)) return;
+
+      const dx = Math.abs(xb - xa);
+      const dy = Math.abs(yb - ya);
+
+      if (isJump(ya, yb, dx)) return;
+
+      const canSubdivide = depth < 20 && dx > 1e-9;
+      const dyPixel = dy * scale;
+
+      if (canSubdivide && dyPixel > 12) {
+        const xm = (xa + xb) / 2;
+        const ym = evalSafe(xm);
+        process(xa, ya, xm, ym, depth + 1);
+        process(xm, ym, xb, yb, depth + 1);
+        return;
       }
+
+      segments.push({
+        x1: cx + xa * scale,
+        y1: cy - ya * scale,
+        x2: cx + xb * scale,
+        y2: cy - yb * scale,
+      });
+    }
+
+    // 基础采样密度：随画布跨度自适应，保证每 ~0.033 世界单位一个基础点
+    const baseN = Math.max(600, Math.min(3000, Math.round(xSpan * 30)));
+    let prevX = xMinW;
+    let prevY = evalSafe(prevX);
+
+    for (let k = 1; k <= baseN; k++) {
+      const x = xMinW + xSpan * k / baseN;
+      const y = evalSafe(x);
+      process(prevX, prevY, x, y, 0);
+      prevX = x;
+      prevY = y;
     }
 
     return segments;
   }
 
+  // 隐式 F(x,y)=0：ImplicitPlot 零等值线追踪
+  function computeSegmentsImplicit(F) {
+    if (!window.JXG || !JXG.Math || !JXG.Math.ImplicitPlot) return [];
+
+    const xMinW = -cx / scale;
+    const xMaxW = (W - cx) / scale;
+    const yMinW = (cy - H) / scale;
+    const yMaxW = cy / scale;
+    const bbox = [xMinW, yMaxW, xMaxW, yMinW];
+
+    const f = (x, y) => {
+      const v = F(x, y);
+      return Number.isFinite(v) ? v : 1e10;
+    };
+
+    const spanX = xMaxW - xMinW;
+    const spanY = yMaxW - yMinW;
+    const span = Math.max(spanX, spanY);
+    const baseRes = Math.max(8, Math.min(32, Math.round(span * 1.5)));
+
+    let plot;
+    try {
+      plot = new JXG.Math.ImplicitPlot(bbox, {
+        resolution_out: baseRes,
+        resolution_in: baseRes,
+        max_steps: 16384,
+        tol_newton: 1.0e-9,
+        tol_cusp: 0.02,
+        h_initial: span / 400,
+        h_max: span / 40,
+        unitX: spanX,
+        unitY: spanY,
+      }, f);
+    } catch (e) {
+      console.warn('ImplicitPlot 初始化失败', e);
+      return [];
+    }
+
+    let dataX, dataY;
+    try {
+      if (typeof plot.plot === 'function') {
+        const res = plot.plot();
+        if (Array.isArray(res) && res.length >= 2) {
+          dataX = res[0];
+          dataY = res[1];
+        }
+      }
+      if ((!dataX || !dataY) && Array.isArray(plot.dataX) && Array.isArray(plot.dataY)) {
+        dataX = plot.dataX;
+        dataY = plot.dataY;
+      }
+    } catch (e) {
+      console.warn('ImplicitPlot 执行失败', e);
+      return [];
+    }
+
+    if (!Array.isArray(dataX) || !Array.isArray(dataY) || dataX.length < 2) return [];
+
+    const segments = [];
+    for (let k = 1; k < dataX.length; k++) {
+      const x0 = dataX[k - 1], y0 = dataY[k - 1];
+      const x1 = dataX[k],     y1 = dataY[k];
+      if (!Number.isFinite(x0) || !Number.isFinite(y0) ||
+          !Number.isFinite(x1) || !Number.isFinite(y1)) continue;
+      segments.push({
+        x1: cx + x0 * scale,
+        y1: cy - y0 * scale,
+        x2: cx + x1 * scale,
+        y2: cy - y1 * scale,
+      });
+    }
+    return segments;
+  }
+
+  // 主入口：有 explicitY 走显式，否则走隐式
+  function computeSegments(F, explicitY) {
+    if (explicitY) return computeSegmentsExplicit(explicitY);
+    return computeSegmentsImplicit(F);
+  }
+
+  /* ===================== 线段排序（用于动画绘制） ===================== */
   function orderSegments(segments) {
     const precision = 1.5;
     function qkey(x, y) {
@@ -538,12 +622,12 @@
     draw();
   }
 
-  function renderCurve(F, latex, animate) {
+  function renderCurve(F, latex, animate, explicitY) {
     clearCurve();
     state.currentF = F;
     state.currentLatex = latex;
 
-    const segments = computeSegments(F);
+    const segments = computeSegments(F, explicitY);
     if (segments.length === 0) return Promise.resolve();
 
     const paths = orderSegments(segments);
@@ -586,7 +670,7 @@
     });
   }
 
-  /* ===================== Canvas 绘制 ===================== */
+  /* ===================== Canvas 绘制（不变） ===================== */
   function draw() {
     const C = settings;
     ctx.save();
@@ -654,34 +738,42 @@
       ctx.moveTo(0, ay); ctx.lineTo(W, ay);
       ctx.stroke();
 
-      // ★ 在边界外坐标轴末端显示 x / y
       ctx.fillStyle = C.axisColor;
       ctx.font = 'italic 18px "Times New Roman", Cambria, Georgia, serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      // x 轴：R 边界右侧，略微上偏，避免水平轴穿过字母
       ctx.fillText('x', cx + state.R * scale + 16, cy - 9);
-      // y 轴：R 边界上方，略微右偏，避免垂直轴穿过字母
       ctx.fillText('y', cx + 9, cy - state.R * scale - 16);
     }
 
     if (C.showTick) {
       ctx.fillStyle = C.tickColor;
       ctx.font = '11px "SF Mono", Consolas, monospace';
+
+      // 自适应间隔：像素密度过小时降低刻度数字密度，避免数字挤在一起
+      let step = 1;
+      if (scale < 8) step = 10;
+      else if (scale < 15) step = 5;
+      else if (scale < 28) step = 2;
+
+      // 覆盖整个屏幕可见范围（iMin/iMax/jMin/jMax 已在 draw 开头算好）
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      for (let i = -state.R; i <= state.R; i++) {
-        if (i === 0) continue;
+      for (let i = iMin; i <= iMax; i++) {
+        if (i === 0 || i % step !== 0) continue;
         const x = cx + i * scale;
         ctx.fillText(String(i), x, cy + 5);
       }
+
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
-      for (let j = -state.R; j <= state.R; j++) {
-        if (j === 0) continue;
+      for (let j = jMin; j <= jMax; j++) {
+        if (j === 0 || j % step !== 0) continue;
         const y = cy - j * scale;
         ctx.fillText(String(j), cx - 5, y);
       }
+
+      // 原点 0 始终显示
       ctx.textAlign = 'right';
       ctx.textBaseline = 'top';
       ctx.fillText('0', cx - 5, cy + 5);
@@ -888,6 +980,50 @@
     };
   }
 
+  /* 检测 F(x,y) 是否能写成 y = g(x)（即 F 对 y 偏导为常数） */
+  function tryExtractExplicitY(F) {
+    const testXs = [-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2, 3];
+    const testYs = [-2, -1, 0, 1, 2, 3];
+    const h = 1e-4;
+
+    let slope = null;
+    for (const x of testXs) {
+      for (const y of testYs) {
+        const v1 = F(x, y);
+        const v2 = F(x, y + h);
+        if (!Number.isFinite(v1) || !Number.isFinite(v2)) continue;
+        const s = (v2 - v1) / h;
+        if (!Number.isFinite(s)) continue;
+        if (Math.abs(s) < 1e-9) return null; // 对 y 无依赖，不是 y 的函数
+        if (slope === null) slope = s;
+        else {
+          const diff = Math.abs(s - slope);
+          const scale = Math.abs(slope) + Math.abs(s) + 1e-9;
+          if (diff > scale * 0.02) return null;
+        }
+      }
+    }
+    if (slope === null) return null;
+
+    // F = slope·y + h(x)  →  y = -h(x)/slope = -F(x,0)/slope
+    const g = (x) => {
+      const v0 = F(x, 0);
+      if (!Number.isFinite(v0)) return NaN;
+      return -v0 / slope;
+    };
+
+    // 验证
+    let okCount = 0;
+    for (const x of testXs) {
+      const y = g(x);
+      if (!Number.isFinite(y)) continue;
+      const fv = F(x, y);
+      if (Number.isFinite(fv) && Math.abs(fv) < 1e-4) okCount++;
+    }
+    if (okCount < 3) return null;
+    return g;
+  }
+
   async function parseLatexToFunction(latex) {
     let s = latex.trim();
     if (!s) return { error: '请输入方程' };
@@ -921,16 +1057,14 @@
       }
     }
 
-    return { F, latex: latex.trim() };
+    let explicitY = null;
+    try { explicitY = tryExtractExplicitY(F); }
+    catch (e) { explicitY = null; }
+
+    return { F, latex: latex.trim(), explicitY };
   }
 
-  /* ===================== ★★★ 精确求交判定 ★★★ =====================
-     策略：
-     1. 先扫四条边界（高精度）—— 识别边/角上的交点
-     2. 若边界无任何交点 → 立即返回（格子未与曲线接触）
-     3. 若有边界交点但无内部交点 → 进行内部双向扫描
-     4. 每条扫描线上的根都用 50 次二分法精确定位，亚像素精度
-  ================================================================= */
+  /* ===================== 精确求交判定（保持现有 scanLine + tol 版本） ===================== */
   function analyzeCell(i, j, F) {
     if (!F) return { interior: false, edge: false, corner: false };
 
@@ -982,31 +1116,33 @@
         const v = g(t);
         if (Number.isFinite(prevV) && Number.isFinite(v) && crossesZero(prevV, v)) {
           const root = bisect(g, prevT, t, prevV);
-          const wx = fixedIsY ? root : fixed;
-          const wy = fixedIsY ? fixed : root;
-          const cls = classifyPoint(wx, wy);
-          if (cls === 'interior') { interior = true; return true; }
-          else if (cls === 'edge') edge = true;
-          else if (cls === 'corner') corner = true;
+          // 验证根的真实性：真实过零点 |F(root)| ≈ 0；渐近线 |F(root)| 巨大
+          const fRoot = g(root);
+          const tol = Math.max(1e-6, Math.min(0.05, 1e-3 * (Math.abs(prevV) + Math.abs(v))));
+          if (Number.isFinite(fRoot) && Math.abs(fRoot) <= tol) {
+            const wx = fixedIsY ? root : fixed;
+            const wy = fixedIsY ? fixed : root;
+            const cls = classifyPoint(wx, wy);
+            if (cls === 'interior') { interior = true; return true; }
+            else if (cls === 'edge') edge = true;
+            else if (cls === 'corner') corner = true;
+          }
         }
         prevT = t; prevV = v;
       }
       return false;
     }
 
-    // ===== Phase 1：四条边界高精度扫描 =====
     const NB = 64;
-    if (scanLine(true, y0, x0, x1, NB)) return { interior: true, edge: true, corner: true };  // 底边
-    if (scanLine(true, y1, x0, x1, NB)) return { interior: true, edge: true, corner: true };  // 顶边
-    if (scanLine(false, x0, y0, y1, NB)) return { interior: true, edge: true, corner: true }; // 左边
-    if (scanLine(false, x1, y0, y1, NB)) return { interior: true, edge: true, corner: true }; // 右边
+    if (scanLine(true, y0, x0, x1, NB)) return { interior: true, edge: true, corner: true };
+    if (scanLine(true, y1, x0, x1, NB)) return { interior: true, edge: true, corner: true };
+    if (scanLine(false, x0, y0, y1, NB)) return { interior: true, edge: true, corner: true };
+    if (scanLine(false, x1, y0, y1, NB)) return { interior: true, edge: true, corner: true };
 
-    // ===== 若边界完全无交点 → 曲线未触及此格 =====
     if (!edge && !corner) {
       return { interior: false, edge: false, corner: false };
     }
 
-    // ===== Phase 2：内部双向扫描 =====
     const NI = 24;
     for (let k = 1; k < NI; k++) {
       const wy = y0 + (y1 - y0) * k / NI;
@@ -1113,7 +1249,6 @@
     state.pending = null;
     state.phase = 'solve';
 
-    // 确认放置后，清除上一轮方程文本与曲线
     eqInput.value = '';
     clearCurve();
 
@@ -1122,7 +1257,6 @@
   }
 
   function cancelPlacement() {
-    // 取消放置：保留上一轮方程文本与曲线
     state.pending = null;
     updateUI();
     draw();
@@ -1136,7 +1270,7 @@
     const parsed = await parseLatexToFunction(latex);
     if (parsed.error) { showToast(parsed.error); return; }
 
-    await renderCurve(parsed.F, latex, settings.curveAnim);
+    await renderCurve(parsed.F, latex, settings.curveAnim, parsed.explicitY);
 
     const problems = judgeEquation(parsed.F);
     const result = problems.length === 0 ? 'pass' : 'fail';
@@ -1153,7 +1287,6 @@
       showToast('通过！请放置下一格');
       state.phase = 'place';
       state.round++;
-      // 保留方程文本与曲线，等下一个放置确认后再清除
       updateUI();
       draw();
     } else {
@@ -1176,7 +1309,6 @@
     });
     state.phase = 'place';
     state.round++;
-    // 判负后保留方程文本与曲线，等下一个放置确认后再清除
     showToast('已判负，进入下一轮');
     updateUI();
     draw();
@@ -1199,7 +1331,6 @@
       eqInput.disabled = false;
       document.getElementById('judgeBtn').disabled = false;
       document.getElementById('loseBtn').disabled = false;
-      // 进入解方程阶段时自动显示工具栏
       bottomBar.classList.remove('hidden');
     }
 
@@ -1273,7 +1404,7 @@
         eqInput.value = eq.latex;
         const parsed = await parseLatexToFunction(eq.latex);
         if (!parsed.error) {
-          renderCurve(parsed.F, eq.latex, false);
+          renderCurve(parsed.F, eq.latex, false, parsed.explicitY);
         }
         closePanel(historyPanel);
       };
@@ -1383,7 +1514,6 @@
   function bindEvents() {
     canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-    // ★ 鼠标坐标提示：显示在鼠标位置上方，精度 0.1
     canvas.addEventListener('mousemove', e => {
       const rect = canvas.getBoundingClientRect();
       const sx = e.clientX - rect.left;
@@ -1412,11 +1542,6 @@
       const i = Math.floor((sx - cx) / scale);
       const j = Math.floor((cy - sy) / scale);
 
-      // 待确认条（confirmBar）已显示时：
-      //  · 点同一格 → 忽略
-      //  · 点 R 范围外空白 → 取消，confirmBar 隐藏
-      //  · 点已占用格 → 忽略
-      //  · 点另一个空格 → 切换到新格
       if (state.pending) {
         if (state.pending.i === i && state.pending.j === j) return;
         if (!inRange(i, j)) { cancelPlacement(); return; }
@@ -1461,12 +1586,26 @@
       }
     }, true);
 
-    document.getElementById('settingsBtn').addEventListener('click', openSettings);
+    document.getElementById('settingsBtn').addEventListener('click', () => {
+      if (settingsPanel.classList.contains('show')) {
+        closePanel(settingsPanel);
+      } else {
+        // 打开设置前，先关闭可能已打开的历史面板，避免两个面板重叠
+        if (historyPanel.classList.contains('show')) closePanel(historyPanel);
+        openSettings();
+      }
+    });
     document.getElementById('closeSettings').addEventListener('click', () => closePanel(settingsPanel));
 
     document.getElementById('historyBtn').addEventListener('click', () => {
-      renderHistory();
-      openPanel(historyPanel);
+      if (historyPanel.classList.contains('show')) {
+        closePanel(historyPanel);
+      } else {
+        // 打开历史前，先关闭可能已打开的设置面板
+        if (settingsPanel.classList.contains('show')) closePanel(settingsPanel);
+        renderHistory();
+        openPanel(historyPanel);
+      }
     });
     document.getElementById('closeHistory').addEventListener('click', () => closePanel(historyPanel));
 
@@ -1547,8 +1686,8 @@
     });
   }
 
-    /* ===================== 虚拟键盘适配 ===================== */
-    function setupKeyboardAdaptation() {
+  /* ===================== 虚拟键盘适配 ===================== */
+  function setupKeyboardAdaptation() {
     const root = document.documentElement;
 
     const getKb = () => {
@@ -1561,8 +1700,6 @@
 
     const cap = () => Math.max(120, Math.round(window.innerHeight * 0.45));
 
-    // 关键修复：不判断 kb.visible，直接读 boundingRect.top（动画期间也是实时的）
-    // 若 top < innerHeight 说明键盘（或其滑入的中间态）已进入视口，立刻算出遮挡高度
     const getTarget = () => {
       const lim = cap();
       const kb = getKb();
@@ -1598,10 +1735,8 @@
       const target = getTarget();
 
       if (target > 0) {
-        // 显示：逐帧跟随 → 无白缝
         current = target;
       } else if (current > 0.5) {
-        // 隐藏：逐帧衰减 → 有动画
         current *= 0.78;
         if (current < 0.5) current = 0;
       } else {
@@ -1610,7 +1745,6 @@
 
       apply(Math.round(current));
 
-      // 关键：visible 期间持续跑 rAF，捕获 boundingRect 的任何中间态
       const kb = getKb();
       const stillActive = (kb && kb.visible) || target > 0 || current > 0;
       if (stillActive) {
@@ -1647,14 +1781,11 @@
     window.addEventListener('resize', start);
     start();
 
-    // ============ 点击空白：关闭键盘 + 关闭面板（不隐藏底部工具栏） ============
     document.addEventListener('pointerdown', (e) => {
       const t = e.target;
       if (!(t instanceof Element)) return;
-      // 点击工具栏/输入框/键盘/面板/按钮/确认条内 → 不处理
       if (t.closest('math-field, math-virtual-keyboard, #mathlive-virtual-keyboard, #bottomBar, #confirmBar, #topLeft, .panel')) return;
 
-      // 隐藏键盘
       const k = getKb();
       if (k && k.visible) {
         try { k.hide(); } catch (err) { /* ignore */ }
@@ -1662,14 +1793,10 @@
         try { eqInput.blur(); } catch (err) { /* ignore */ }
       }
 
-      // 关闭设置/历史面板
       if (settingsPanel.classList.contains('show')) closePanel(settingsPanel);
       if (historyPanel.classList.contains('show')) closePanel(historyPanel);
-
-      // 确认条（pending）的取消交给 canvas.mousedown 自己处理
     }, true);
 
-    // ============ ESC 分级关闭：面板 > 键盘 > 确认条 ============
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
       if (settingsPanel.classList.contains('show')) {
