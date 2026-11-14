@@ -27,7 +27,6 @@
   canvas {
     display: block; cursor: crosshair; background: transparent;
     transform: translateY(calc(-1 * var(--kb-shift)));
-    transition: transform 0.25s ease;
     will-change: transform;
   }
 
@@ -68,13 +67,19 @@
   }
 
   #bottomBar {
-    position: fixed; bottom: 16px; left: 50%;
-    transform: translate(-50%, calc(-1 * var(--kb-shift)));
-    transition: transform 0.25s ease;
+    position: fixed; bottom: calc(16px + var(--kb-shift)); left: 50%;
+    transform: translateX(-50%);
+    transition: transform 0.25s ease, opacity 0.25s ease;
     display: flex; gap: 10px; align-items: center;
     background: #fff; border: 1px solid #e5e7eb; border-radius: 14px;
     padding: 10px 16px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.06); max-width: 94vw;
+    will-change: transform, opacity;
+  }
+  #bottomBar.hidden {
+    transform: translate(-50%, calc(100% + 32px));
+    opacity: 0;
+    pointer-events: none;
   }
   math-field {
     width: 400px; min-height: 44px; border: 1px solid #e5e7eb;
@@ -85,11 +90,13 @@
   }
   math-field:focus-within { border-color: #6366f1; }
   math-field[disabled] { background: #f9fafb; opacity: 0.5; cursor: default; }
+  math-field::part(menu-toggle) {
+    display: none;
+  }
 
   #confirmBar {
-    position: fixed; bottom: 92px; left: 50%;
-    transform: translate(-50%, calc(-1 * var(--kb-shift)));
-    transition: transform 0.25s ease;
+    position: fixed; bottom: calc(92px + var(--kb-shift)); left: 50%;
+    transform: translateX(-50%);
     display: none; gap: 8px; align-items: center;
     background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
     padding: 8px 12px;
@@ -164,10 +171,10 @@
   #flash.show { opacity: 1; }
 
   #toast {
-    position: fixed; bottom: 146px; left: 50%;
-    transform: translate(-50%, calc(-1 * var(--kb-shift)));
+    position: fixed; bottom: calc(146px + var(--kb-shift)); left: 50%;
+    transform: translateX(-50%);
     background: #111; color: #fff; padding: 8px 18px; border-radius: 9px;
-    font-size: 13px; opacity: 0; transition: opacity 0.2s, transform 0.25s ease;
+    font-size: 13px; opacity: 0; transition: opacity 0.2s;
     pointer-events: none; z-index: 200; white-space: nowrap;
     max-width: 80vw; overflow: hidden; text-overflow: ellipsis;
   }
@@ -1179,6 +1186,7 @@
   function updateUI() {
     const placer = state.round % 2 === 1 ? '甲' : '乙';
     const solver = state.round % 2 === 1 ? '乙' : '甲';
+    const bottomBar = document.getElementById('bottomBar');
 
     if (state.phase === 'place') {
       turnLabel.textContent = `第 ${state.round} 轮 · ${placer} 放格`;
@@ -1191,6 +1199,8 @@
       eqInput.disabled = false;
       document.getElementById('judgeBtn').disabled = false;
       document.getElementById('loseBtn').disabled = false;
+      // 进入解方程阶段时自动显示工具栏
+      bottomBar.classList.remove('hidden');
     }
 
     if (state.pending) {
@@ -1401,6 +1411,20 @@
       const sy = e.clientY - rect.top;
       const i = Math.floor((sx - cx) / scale);
       const j = Math.floor((cy - sy) / scale);
+
+      // 待确认条（confirmBar）已显示时：
+      //  · 点同一格 → 忽略
+      //  · 点 R 范围外空白 → 取消，confirmBar 隐藏
+      //  · 点已占用格 → 忽略
+      //  · 点另一个空格 → 切换到新格
+      if (state.pending) {
+        if (state.pending.i === i && state.pending.j === j) return;
+        if (!inRange(i, j)) { cancelPlacement(); return; }
+        if (state.cells.has(cellKey(i, j))) return;
+        state.pending = null;
+        updateUI();
+      }
+
       if (!inRange(i, j)) return;
       const key = cellKey(i, j);
       if (state.cells.has(key)) return;
@@ -1526,7 +1550,6 @@
     /* ===================== 虚拟键盘适配 ===================== */
     function setupKeyboardAdaptation() {
     const root = document.documentElement;
-    let lastShift = -1;
 
     const getKb = () => {
       if (window.mathVirtualKeyboard) return window.mathVirtualKeyboard;
@@ -1536,91 +1559,117 @@
       return null;
     };
 
-    const setShift = (h) => {
-      const v = Math.max(0, Math.round(h));
-      if (v === lastShift) return;
-      lastShift = v;
-      root.style.setProperty('--kb-shift', v + 'px');
-    };
+    const cap = () => Math.max(120, Math.round(window.innerHeight * 0.45));
 
-    const getKbHeight = () => {
-      const maxH = Math.max(120, Math.round(window.innerHeight * 0.45));
+    // 关键修复：不判断 kb.visible，直接读 boundingRect.top（动画期间也是实时的）
+    // 若 top < innerHeight 说明键盘（或其滑入的中间态）已进入视口，立刻算出遮挡高度
+    const getTarget = () => {
+      const lim = cap();
       const kb = getKb();
-
-      if (kb) {
-        if (kb.visible === false) return 0;
-        if (kb.visible === true) {
-          // 优先使用 MathLive 官方 API（最可靠，不受 Shadow DOM 影响）
-          if (kb.boundingRect && kb.boundingRect.height > 0) {
-            return Math.min(Math.round(kb.boundingRect.height), maxH);
-          }
-          if (typeof kb.height === 'number' && kb.height > 0) {
-            return Math.min(Math.round(kb.height), maxH);
+      if (kb && kb.boundingRect) {
+        const top = kb.boundingRect.top;
+        const h = kb.boundingRect.height;
+        if (h > 0 && top < window.innerHeight) {
+          const covered = window.innerHeight - top;
+          if (covered > 0) return Math.max(0, Math.min(Math.round(covered), lim));
+        }
+        return 0;
+      }
+      const el = document.querySelector('math-virtual-keyboard, #mathlive-virtual-keyboard');
+      if (el) {
+        const st = getComputedStyle(el);
+        if (st.display !== 'none' && st.visibility !== 'hidden') {
+          const rect = el.getBoundingClientRect();
+          if (rect.height > 0 && rect.top < window.innerHeight) {
+            const covered = window.innerHeight - rect.top;
+            if (covered > 0) return Math.max(0, Math.min(Math.round(covered), lim));
           }
         }
       }
-
-      // 兜底：DOM 测量
-      const el = document.querySelector('math-virtual-keyboard, #mathlive-virtual-keyboard');
-      if (!el) return 0;
-      const style = getComputedStyle(el);
-      if (style.display === 'none' || style.visibility === 'hidden') return 0;
-      const rect = el.getBoundingClientRect();
-      if (!rect || rect.height < 1) return 0;
-      if (rect.top >= window.innerHeight) return 0;
-      return Math.min(Math.round(rect.height), maxH);
+      return 0;
     };
 
-    const update = () => setShift(getKbHeight());
+    const apply = (v) => root.style.setProperty('--kb-shift', v + 'px');
 
-    // 监听 MathLive 官方事件
+    let current = 0;
+    let animating = false;
+
+    const tick = () => {
+      const target = getTarget();
+
+      if (target > 0) {
+        // 显示：逐帧跟随 → 无白缝
+        current = target;
+      } else if (current > 0.5) {
+        // 隐藏：逐帧衰减 → 有动画
+        current *= 0.78;
+        if (current < 0.5) current = 0;
+      } else {
+        current = 0;
+      }
+
+      apply(Math.round(current));
+
+      // 关键：visible 期间持续跑 rAF，捕获 boundingRect 的任何中间态
+      const kb = getKb();
+      const stillActive = (kb && kb.visible) || target > 0 || current > 0;
+      if (stillActive) {
+        requestAnimationFrame(tick);
+      } else {
+        animating = false;
+      }
+    };
+
+    const start = () => {
+      if (animating) return;
+      animating = true;
+      tick();
+    };
+
     const kb = getKb();
     if (kb && typeof kb.addEventListener === 'function') {
       try {
-        kb.addEventListener('geometrychange', update);
-        kb.addEventListener('toggle', update);
+        kb.addEventListener('geometrychange', start);
+        kb.addEventListener('toggle', start);
       } catch (e) { /* ignore */ }
     }
 
-    // math-field 焦点变化时多时机补采（覆盖键盘滑入/滑出动画）
-    eqInput.addEventListener('focus', () => {
-      setTimeout(update, 50);
-      setTimeout(update, 250);
-      setTimeout(update, 500);
-    });
-    eqInput.addEventListener('blur', () => {
-      setTimeout(update, 50);
-      setTimeout(update, 250);
-    });
+    eqInput.addEventListener('focus', start);
+    eqInput.addEventListener('blur', start);
 
-    // 观察 DOM 变化（键盘首次显示时会被创建）
     try {
-      new MutationObserver(update).observe(document.body, {
-        childList: true, subtree: true,
-        attributes: true, attributeFilter: ['style', 'class'],
+      new MutationObserver(start).observe(document.body, {
+        childList: true, subtree: true, attributes: true,
+        attributeFilter: ['style', 'class'],
       });
     } catch (e) { /* ignore */ }
 
-    window.addEventListener('resize', update);
+    window.addEventListener('resize', start);
+    start();
 
-    // 轮询兜底（100ms，setShift 有去重，不会频繁写样式）
-    setInterval(update, 100);
-    update();
-
-    // 点击空白处隐藏键盘
+    // ============ 点击空白：关闭键盘 + 关闭面板（不隐藏底部工具栏） ============
     document.addEventListener('pointerdown', (e) => {
       const t = e.target;
       if (!(t instanceof Element)) return;
+      // 点击工具栏/输入框/键盘/面板/按钮/确认条内 → 不处理
       if (t.closest('math-field, math-virtual-keyboard, #mathlive-virtual-keyboard, #bottomBar, #confirmBar, #topLeft, .panel')) return;
+
+      // 隐藏键盘
       const k = getKb();
       if (k && k.visible) {
         try { k.hide(); } catch (err) { /* ignore */ }
       } else if (document.activeElement === eqInput) {
         try { eqInput.blur(); } catch (err) { /* ignore */ }
       }
+
+      // 关闭设置/历史面板
+      if (settingsPanel.classList.contains('show')) closePanel(settingsPanel);
+      if (historyPanel.classList.contains('show')) closePanel(historyPanel);
+
+      // 确认条（pending）的取消交给 canvas.mousedown 自己处理
     }, true);
 
-    // ESC：优先关闭设置/历史面板，其次关闭键盘
+    // ============ ESC 分级关闭：面板 > 键盘 > 确认条 ============
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
       if (settingsPanel.classList.contains('show')) {
@@ -1637,7 +1686,14 @@
       if (k && k.visible) {
         try { k.hide(); } catch (err) { /* ignore */ }
         e.preventDefault();
-      } else if (document.activeElement === eqInput) {
+        return;
+      }
+      if (state.pending) {
+        cancelPlacement();
+        e.preventDefault();
+        return;
+      }
+      if (document.activeElement === eqInput) {
         try { eqInput.blur(); } catch (err) { /* ignore */ }
       }
     }, true);
