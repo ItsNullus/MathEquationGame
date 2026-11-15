@@ -5,7 +5,6 @@
 <title></title>
 <script defer src="https://cdn.jsdelivr.net/npm/mathlive"></script>
 <script src="https://cdn.jsdelivr.net/npm/marchingsquares@1.3.3/dist/marchingsquares.min.js"></script>
-<!-- ★ JSXGraph：显式 functiongraph + 隐式 ImplicitPlot -->
 <script src="https://cdn.jsdelivr.net/npm/jsxgraph@1.14.0/distrib/jsxgraphcore.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -32,7 +31,7 @@
     will-change: transform;
   }
 
-  /* ★ 鼠标坐标提示（无背景，只显示文字） */
+  /* 鼠标坐标提示（无背景，只显示文字） */
   #coordTip {
     position: fixed;
     color: #111;
@@ -57,6 +56,7 @@
     background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
     padding: 6px 12px; font-size: 13px; color: #374151; cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
   }
   .iconBtn:hover { background: #f9fafb; border-color: #d1d5db; }
   .iconBtn:disabled { opacity: 0.4; cursor: default; }
@@ -75,7 +75,8 @@
     display: flex; gap: 10px; align-items: center;
     background: #fff; border: 1px solid #e5e7eb; border-radius: 14px;
     padding: 10px 16px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.06); max-width: 94vw;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    max-width: calc(100vw - 24px);
     will-change: transform, opacity;
   }
   #bottomBar.hidden {
@@ -84,7 +85,10 @@
     pointer-events: none;
   }
   math-field {
-    width: 400px; min-height: 44px; border: 1px solid #e5e7eb;
+    flex: 0 0 auto;
+    width: min(400px, calc(100vw - 420px));
+    min-width: 120px;
+    min-height: 44px; border: 1px solid #e5e7eb;
     border-radius: 10px; padding: 8px 14px; font-size: 18px;
     --hue: 220; outline: none;
     transition: border-color 0.15s;
@@ -98,6 +102,40 @@
     display: none;
   }
 
+  #postJudgeGroup {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+    max-width: 0;
+    opacity: 0;
+    overflow: hidden;
+    margin-left: -10px;
+    transition: max-width 0.28s ease, opacity 0.28s ease, margin-left 0.28s ease;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  #postJudgeGroup.show {
+    max-width: 220px;
+    opacity: 1;
+    margin-left: 0;
+    pointer-events: auto;
+  }
+
+  /* 极窄屏（手机竖屏）时，三按钮组换行到第二行，避免任何截断 */
+  @media (max-width: 560px) {
+    #bottomBar {
+      flex-wrap: wrap;
+      justify-content: center;
+      max-width: calc(100vw - 16px);
+    }
+    #postJudgeGroup.show {
+      width: 100%;
+      max-width: 100%;
+      justify-content: center;
+      margin-left: 0;
+    }
+  }
+
   #confirmBar {
     position: fixed; bottom: calc(92px + var(--kb-shift)); left: 50%;
     transform: translateX(-50%);
@@ -106,7 +144,6 @@
     padding: 8px 12px;
     box-shadow: 0 2px 10px rgba(0,0,0,0.06);
   }
-
   #confirmBar.show { display: flex; }
 
   .panel {
@@ -166,6 +203,7 @@
   .res-pass { color: #10b981; }
   .res-fail { color: #ef4444; }
   .res-unknown { color: #6b7280; }
+  .res-skip { color: #6366f1; }
   .empty { color: #9ca3af; font-size: 13px; padding: 12px 0; text-align: center; }
 
   #flash {
@@ -205,7 +243,12 @@
   <div id="bottomBar">
     <math-field id="eqInput" placeholder="输入方程，如 x^2+y^2=1"></math-field>
     <button class="iconBtn" id="judgeBtn">判定</button>
-    <button class="iconBtn" id="loseBtn" title="判当前解题方失败">判负</button>
+    <!-- ★ 原「判负」位置，判定失败后展开的三个按钮 -->
+    <div id="postJudgeGroup">
+      <button class="iconBtn" id="rejudgeBtn" title="重新编辑方程并判定">重编</button>
+      <button class="iconBtn" id="forceLoseBtn" title="判负重开">认输</button>
+      <button class="iconBtn" id="skipBtn" title="跳过这次解答">跳过</button>
+    </div>
   </div>
 
   <div id="confirmBar">
@@ -326,6 +369,7 @@
   const settingsPanel = document.getElementById('settingsPanel');
   const historyPanel = document.getElementById('historyPanel');
   const coordTip = document.getElementById('coordTip');
+  const postJudgeGroup = document.getElementById('postJudgeGroup');
 
   let W = 0, H = 0, cx = 0, cy = 0, scale = 44;
   let dpr = window.devicePixelRatio || 1;
@@ -335,7 +379,6 @@
   function inRange(i, j) { return i >= -state.R && i < state.R && j >= -state.R && j < state.R; }
   function snap(v) { return Math.round(v * dpr) / dpr; }
 
-  // 坐标格式化：精度 0.1，消除 "-0.0"
   function fmt1(v) {
     let s = v.toFixed(1);
     if (s === '-0.0') s = '0.0';
@@ -357,30 +400,7 @@
     scale = usable / (2 * state.R);
   }
 
-  /* ===================== ★ 曲线绘制：双轨制 =====================
-     · 显式 y = g(x)：走 JSXGraph functiongraph 自适应采样，能正确处理高频（如 sin(100x)）与渐近线
-     · 隐式 F(x,y)=0：走 JSXGraph ImplicitPlot 零等值线追踪，能处理闭合曲线、多分支
-  ============================================================ */
-  let _offBoard = null;
-  function getOffscreenBoard() {
-    if (_offBoard) return _offBoard;
-    const div = document.createElement('div');
-    div.style.cssText = 'position:absolute; left:-9999px; top:-9999px; width:1px; height:1px;';
-    document.body.appendChild(div);
-    _offBoard = JXG.JSXGraph.initBoard(div, {
-      boundingbox: [-10, 10, 10, -10],
-      axis: false,
-      showCopyright: false,
-      showNavigation: false,
-    });
-    return _offBoard;
-  }
-
-    /* ===================== 显函数自适应采样 =====================
-     与 Desmos / JSXGraph 内部算法一致：均匀基础采样 + 递归细分。
-     自适应规则：相邻点 y 变化超过 12 像素则细分；
-     跳变检测：斜率异常大且 y 值超出屏幕范围，则断开（处理 tan 等渐近线）。
-  ============================================================ */
+  /* ===================== 曲线绘制：双轨制 ===================== */
   function computeSegmentsExplicit(g) {
     const xMinW = -cx / scale;
     const xMaxW = (W - cx) / scale;
@@ -411,10 +431,8 @@
 
     function process(xa, ya, xb, yb, depth) {
       if (!Number.isFinite(ya) || !Number.isFinite(yb)) return;
-
       const dx = Math.abs(xb - xa);
       const dy = Math.abs(yb - ya);
-
       if (isJump(ya, yb, dx)) return;
 
       const canSubdivide = depth < 20 && dx > 1e-9;
@@ -436,11 +454,9 @@
       });
     }
 
-    // 基础采样密度：随画布跨度自适应，保证每 ~0.033 世界单位一个基础点
     const baseN = Math.max(600, Math.min(3000, Math.round(xSpan * 30)));
     let prevX = xMinW;
     let prevY = evalSafe(prevX);
-
     for (let k = 1; k <= baseN; k++) {
       const x = xMinW + xSpan * k / baseN;
       const y = evalSafe(x);
@@ -448,11 +464,9 @@
       prevX = x;
       prevY = y;
     }
-
     return segments;
   }
 
-  // 隐式 F(x,y)=0：ImplicitPlot 零等值线追踪
   function computeSegmentsImplicit(F) {
     if (!window.JXG || !JXG.Math || !JXG.Math.ImplicitPlot) return [];
 
@@ -526,13 +540,11 @@
     return segments;
   }
 
-  // 主入口：有 explicitY 走显式，否则走隐式
   function computeSegments(F, explicitY) {
     if (explicitY) return computeSegmentsExplicit(explicitY);
     return computeSegmentsImplicit(F);
   }
 
-  /* ===================== 线段排序（用于动画绘制） ===================== */
   function orderSegments(segments) {
     const precision = 1.5;
     function qkey(x, y) {
@@ -556,7 +568,6 @@
     function dfs(startKey) {
       const path = [];
       let currentKey = startKey;
-
       while (true) {
         const list = nodes.get(currentKey) || [];
         let next = null;
@@ -582,10 +593,8 @@
 
         if (path.length === 0) path.push(startPt);
         path.push(endPt);
-
         currentKey = endKey;
       }
-
       return path;
     }
 
@@ -607,7 +616,6 @@
       const path = dfs(qkey(seg.x1, seg.y1));
       if (path.length >= 2) paths.push(path);
     }
-
     return paths;
   }
 
@@ -670,7 +678,6 @@
     });
   }
 
-  /* ===================== Canvas 绘制（不变） ===================== */
   function draw() {
     const C = settings;
     ctx.save();
@@ -750,13 +757,11 @@
       ctx.fillStyle = C.tickColor;
       ctx.font = '11px "SF Mono", Consolas, monospace';
 
-      // 自适应间隔：像素密度过小时降低刻度数字密度，避免数字挤在一起
       let step = 1;
       if (scale < 8) step = 10;
       else if (scale < 15) step = 5;
       else if (scale < 28) step = 2;
 
-      // 覆盖整个屏幕可见范围（iMin/iMax/jMin/jMax 已在 draw 开头算好）
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       for (let i = iMin; i <= iMax; i++) {
@@ -773,7 +778,6 @@
         ctx.fillText(String(j), cx - 5, y);
       }
 
-      // 原点 0 始终显示
       ctx.textAlign = 'right';
       ctx.textBaseline = 'top';
       ctx.fillText('0', cx - 5, cy + 5);
@@ -980,7 +984,6 @@
     };
   }
 
-  /* 检测 F(x,y) 是否能写成 y = g(x)（即 F 对 y 偏导为常数） */
   function tryExtractExplicitY(F) {
     const testXs = [-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2, 3];
     const testYs = [-2, -1, 0, 1, 2, 3];
@@ -994,7 +997,7 @@
         if (!Number.isFinite(v1) || !Number.isFinite(v2)) continue;
         const s = (v2 - v1) / h;
         if (!Number.isFinite(s)) continue;
-        if (Math.abs(s) < 1e-9) return null; // 对 y 无依赖，不是 y 的函数
+        if (Math.abs(s) < 1e-9) return null;
         if (slope === null) slope = s;
         else {
           const diff = Math.abs(s - slope);
@@ -1005,20 +1008,18 @@
     }
     if (slope === null) return null;
 
-    // F = slope·y + h(x)  →  y = -h(x)/slope = -F(x,0)/slope
     const g = (x) => {
       const v0 = F(x, 0);
       if (!Number.isFinite(v0)) return NaN;
       return -v0 / slope;
     };
 
-    // 验证
     let okCount = 0;
     for (const x of testXs) {
       const y = g(x);
       if (!Number.isFinite(y)) continue;
       const fv = F(x, y);
-      if (Number.isFinite(fv) && Math.abs(fv) < 1e-4) okCount++;
+      if (Number.isFinite(fv) && Math.abs(fv) < 1e-3) okCount++;
     }
     if (okCount < 3) return null;
     return g;
@@ -1064,7 +1065,7 @@
     return { F, latex: latex.trim(), explicitY };
   }
 
-  /* ===================== 精确求交判定（保持现有 scanLine + tol 版本） ===================== */
+  /* ===================== 精确求交判定 ===================== */
   function analyzeCell(i, j, F) {
     if (!F) return { interior: false, edge: false, corner: false };
 
@@ -1116,7 +1117,6 @@
         const v = g(t);
         if (Number.isFinite(prevV) && Number.isFinite(v) && crossesZero(prevV, v)) {
           const root = bisect(g, prevT, t, prevV);
-          // 验证根的真实性：真实过零点 |F(root)| ≈ 0；渐近线 |F(root)| 巨大
           const fRoot = g(root);
           const tol = Math.max(1e-6, Math.min(0.05, 1e-3 * (Math.abs(prevV) + Math.abs(v))));
           if (Number.isFinite(fRoot) && Math.abs(fRoot) <= tol) {
@@ -1230,6 +1230,9 @@
   }
 
   /* ===================== 交互 ===================== */
+  function showPostJudgeBar() { postJudgeGroup.classList.add('show'); }
+  function hidePostJudgeBar() { postJudgeGroup.classList.remove('show'); }
+
   function failPlacement(msg) {
     showToast(msg);
     canvasWrap.classList.remove('shake');
@@ -1251,6 +1254,7 @@
 
     eqInput.value = '';
     clearCurve();
+    hidePostJudgeBar();
 
     updateUI();
     draw();
@@ -1287,6 +1291,7 @@
       showToast('通过！请放置下一格');
       state.phase = 'place';
       state.round++;
+      hidePostJudgeBar();
       updateUI();
       draw();
     } else {
@@ -1294,6 +1299,7 @@
         ? problems[0]
         : `${problems[0]} 等 ${problems.length} 项`;
       showToast('未通过：' + detail);
+      showPostJudgeBar();
       draw();
     }
   }
@@ -1309,7 +1315,27 @@
     });
     state.phase = 'place';
     state.round++;
+    hidePostJudgeBar();
     showToast('已判负，进入下一轮');
+    updateUI();
+    draw();
+  }
+
+  function skip() {
+    if (state.phase !== 'solve') { showToast('当前不是解题阶段'); return; }
+    state.equations.push({
+      latex: eqInput.value.trim() || '(已跳过)',
+      time: new Date(),
+      result: 'skip',
+      round: state.round,
+      problems: [],
+    });
+    state.phase = 'place';
+    state.round++;
+    eqInput.value = '';
+    clearCurve();
+    hidePostJudgeBar();
+    showToast('已跳过本轮，进入下一轮');
     updateUI();
     draw();
   }
@@ -1323,14 +1349,13 @@
     if (state.phase === 'place') {
       turnLabel.textContent = `第 ${state.round} 轮 · ${placer} 放格`;
       confirmBar.classList.remove('show');
+      hidePostJudgeBar();
       eqInput.disabled = true;
       document.getElementById('judgeBtn').disabled = true;
-      document.getElementById('loseBtn').disabled = true;
     } else {
       turnLabel.textContent = `第 ${state.round} 轮 · ${solver} 解方程`;
       eqInput.disabled = false;
       document.getElementById('judgeBtn').disabled = false;
-      document.getElementById('loseBtn').disabled = false;
       bottomBar.classList.remove('hidden');
     }
 
@@ -1367,9 +1392,11 @@
       const div = document.createElement('div');
       div.className = 'histItem';
       const cls = eq.result === 'pass' ? 'res-pass'
-                : eq.result === 'fail' ? 'res-fail' : 'res-unknown';
+                : eq.result === 'fail' ? 'res-fail'
+                : eq.result === 'skip' ? 'res-skip' : 'res-unknown';
       const txt = eq.result === 'pass' ? '通过'
-                : eq.result === 'fail' ? '未通过' : '判负';
+                : eq.result === 'fail' ? '未通过'
+                : eq.result === 'skip' ? '跳过' : '判负';
 
       const eqSpan = document.createElement('span');
       eqSpan.className = 'eqText';
@@ -1457,6 +1484,7 @@
     state.equations = [];
     clearCurve();
     eqInput.value = '';
+    hidePostJudgeBar();
     updateUI();
     draw();
   }
@@ -1575,7 +1603,25 @@
     document.getElementById('confirmBtn').addEventListener('click', confirmPlacement);
     document.getElementById('cancelBtn').addEventListener('click', cancelPlacement);
     document.getElementById('judgeBtn').addEventListener('click', judge);
-    document.getElementById('loseBtn').addEventListener('click', lose);
+
+    document.getElementById('rejudgeBtn').addEventListener('click', () => {
+      eqInput.value = '';
+      hidePostJudgeBar();
+      showToast('请重新输入方程');
+      setTimeout(() => {
+        try { eqInput.focus(); } catch (e) { /* ignore */ }
+      }, 100);
+    });
+
+    document.getElementById('forceLoseBtn').addEventListener('click', () => {
+      hidePostJudgeBar();
+      lose();
+    });
+
+    document.getElementById('skipBtn').addEventListener('click', () => {
+      hidePostJudgeBar();
+      skip();
+    });
 
     eqInput.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowRight') {
@@ -1590,7 +1636,6 @@
       if (settingsPanel.classList.contains('show')) {
         closePanel(settingsPanel);
       } else {
-        // 打开设置前，先关闭可能已打开的历史面板，避免两个面板重叠
         if (historyPanel.classList.contains('show')) closePanel(historyPanel);
         openSettings();
       }
@@ -1601,7 +1646,6 @@
       if (historyPanel.classList.contains('show')) {
         closePanel(historyPanel);
       } else {
-        // 打开历史前，先关闭可能已打开的设置面板
         if (settingsPanel.classList.contains('show')) closePanel(settingsPanel);
         renderHistory();
         openPanel(historyPanel);
@@ -1812,6 +1856,11 @@
       const k = getKb();
       if (k && k.visible) {
         try { k.hide(); } catch (err) { /* ignore */ }
+        e.preventDefault();
+        return;
+      }
+      if (postJudgeGroup.classList.contains('show')) {
+        hidePostJudgeBar();
         e.preventDefault();
         return;
       }
